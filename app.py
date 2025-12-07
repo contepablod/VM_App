@@ -44,7 +44,7 @@ field_filter = "All"
 well_type_filter = "All"
 year_range = [year_min, year_max]
 
-# Dataframes (placeholders for state)
+# Dataframes
 filtered_prod = prod.copy()
 filtered_frac = frac.copy()
 top_oil_wells_df = pd.DataFrame()
@@ -64,10 +64,10 @@ total_water = 0.0
 n_frac_wells = 0
 avg_lateral_length = 0.0
 avg_stages = 0.0
-total_proppant_klb = 0.0
-total_fluid_kbbl = 0.0
-avg_proppant_intensity = 0.0  # lb/ft
-avg_fluid_intensity = 0.0  # bbl/ft
+total_proppant = 0.0
+total_fluid = 0.0
+avg_proppant_intensity = 0.0
+avg_fluid_intensity = 0.0
 
 # Map / spatial
 max_oil = 0
@@ -81,9 +81,11 @@ text = ""
 selected_well = ""
 
 # Navigation state
-active_page = "/"
+active_page = "overview"
 nav_overview = "nav-button active"
-nav_production = nav_frac = nav_map = nav_wells = nav_data = nav_links = nav_geology = nav_about = "nav-button"
+nav_production = nav_frac = nav_map = nav_wells = nav_data = nav_links = nav_geology = (
+    nav_about
+) = "nav-button"
 
 
 # ------------------------------------------------------------------
@@ -138,7 +140,7 @@ def update_state(state):
     elif field_filter != "All":
         d2 = d2[d2["field"] == field_filter]
 
-    # well type filter (if present in frac dataset)
+    # well type filter
     if "well_type" in d2.columns:
         if isinstance(well_type_filter, list):
             if "All" not in well_type_filter:
@@ -146,10 +148,8 @@ def update_state(state):
         elif well_type_filter != "All":
             d2 = d2[d2["well_type"] == well_type_filter]
 
-    d2 = d2[
-        (d2["year"] >= state.year_range[0]) & (d2["year"] <= state.year_range[1])
-    ]
-    # ---- Add frac intensity metrics (lb/ft and bbl/ft) ----
+    d2 = d2[(d2["year"] >= state.year_range[0]) & (d2["year"] <= state.year_range[1])]
+    # ---- Add frac intensity metrics  ----
     if not d2.empty:
         d2 = d2.copy()
         # avoid division by zero
@@ -162,16 +162,17 @@ def update_state(state):
 
     # ---------- LATEST RECORD PER WELL (for KPIs & map) ----------
     if not d1.empty:
-        idx_latest = d1.groupby("well_id")["month_count"].idxmax()
-        latest = d1.loc[idx_latest]
+        # idx_latest = d1.groupby("well_id")["month_count"].idxmax()
+        # latest = d1.loc[idx_latest]
+        latest = d1
     else:
         latest = d1.head(0)
 
     # ---------- KPIs: production ----------
     state.n_wells = latest["well_id"].nunique()
-    state.total_oil = round(latest["oil_cum_m3"].sum() / 1_000, 2)
-    state.total_gas = round(latest["gas_cum_km3"].sum() / 1_000, 2)
-    state.total_water = round(latest["water_prod_cum_m3"].sum() / 1_000, 2)
+    state.total_oil = round(latest["oil_prod_m3"].sum() / 1_000_000, 2)
+    state.total_gas = round(latest["gas_prod_km3"].sum() / 1_000, 2)
+    state.total_water = round(latest["water_prod_m3"].sum() / 1_000_000, 2)
 
     # ---------- WELLS BY TYPE ----------
     if not latest.empty:
@@ -231,7 +232,7 @@ def update_state(state):
     if not latest.empty:
         latest = latest.copy()
 
-        # basic stats (if you need them)
+        # basic stats
         state.max_oil = latest["oil_cum_m3"].max()
         state.max_gas = latest["gas_cum_km3"].max()
 
@@ -313,10 +314,10 @@ def update_state(state):
         state.n_frac_wells = d2["well_id"].nunique()
         state.avg_lateral_length = round(d2["lateral_length_ft"].mean(), 0)
         state.avg_stages = round(d2["number_stages"].mean(), 1)
-        state.total_proppant_klb = round(d2["proppant_pumped_lb"].sum() / 1_000, 2)
-        state.total_fluid_kbbl = round(d2["fluid_pumped_bbl"].sum() / 1_000, 2)
+        state.total_proppant = round(d2["proppant_pumped_lb"].sum() / 1_000_000, 2)
+        state.total_fluid = round(d2["fluid_pumped_bbl"].sum() / 1_000_100, 2)
 
-        # intensity KPIs (drop NaNs before mean)
+        # intensity KPIs
         if "proppant_intensity_lbft" in d2.columns:
             state.avg_proppant_intensity = round(
                 d2["proppant_intensity_lbft"].dropna().mean(), 1
@@ -335,8 +336,8 @@ def update_state(state):
         state.n_frac_wells = 0
         state.avg_lateral_length = 0.0
         state.avg_stages = 0.0
-        state.total_proppant_klb = 0.0
-        state.total_fluid_kbbl = 0.0
+        state.total_proppant = 0.0
+        state.total_fluid = 0.0
         state.avg_proppant_intensity = 0.0
         state.avg_fluid_intensity = 0.0
 
@@ -345,9 +346,9 @@ def update_state(state):
 # NAVIGATION STATE UPDATE
 # ------------------------------------------------------------------
 def update_nav(state):
-    current = getattr(state, "active_page", "/")
+    current = getattr(state, "active_page", "overview")
 
-    state.nav_overview = "nav-button active" if current == "/" else "nav-button"
+    state.nav_overview = "nav-button active" if current == "overview" else "nav-button"
     state.nav_production = (
         "nav-button active" if current == "production" else "nav-button"
     )
@@ -381,7 +382,6 @@ def on_init(state):
         state.active_page = "/"
     if not hasattr(state, "map_metric") or not state.map_metric:
         state.map_metric = "Oil"
-
     update_state(state)
     update_nav(state)
 
@@ -464,12 +464,10 @@ with tgb.Page() as overview_page:
     sidebar()
     with tgb.part(class_name="main_content"):
         tgb.text("# 🛢️ Vaca Muerta Formation – Overview", mode="md")
-        # --- Image + Description Side-by-Side ---
         with tgb.part(class_name="card"):
             with tgb.layout(columns="1 2"):
                 with tgb.part():
                     tgb.image(HEADER1_IMAGE_PATH, width="100%", height="100%")
-                # Right: Text card
                 with tgb.part(class_name="card"):
                     tgb.text(
                         "### 🌎 About Vaca Muerta\n\n"
@@ -563,18 +561,18 @@ with tgb.Page() as overview_page:
             with tgb.layout(columns="2 2"):
                 with tgb.part():
                     tgb.text("### 📊 Production KPIs", mode="md")
-                    tgb.text("**#️⃣ Number of wells:** {n_wells}", mode="md")
-                    tgb.text("**🛢️ Total Oil (m³):** {total_oil}", mode="md")
-                    tgb.text("**🔥 Total Gas (km³):** {total_gas}", mode="md")
-                    tgb.text("**💧 Total Water (m³):** {total_water}", mode="md")
+                    # tgb.text("**#️⃣ Number of wells:** {n_wells}", mode="md")
+                    tgb.text("**🛢️ Total Oil (Mm³):** {total_oil}", mode="md")
+                    tgb.text("**🔥 Total Gas (Mm³):** {total_gas}", mode="md")
+                    tgb.text("**💧 Total Water (Mm³):** {total_water}", mode="md")
 
                 with tgb.part():
                     tgb.text("### 💥 Frac KPIs", mode="md")
                     tgb.text("**🧵 Frac'd wells:** {n_frac_wells}", mode="md")
                     tgb.text("**📏 Avg lateral (ft):** {avg_lateral_length}", mode="md")
                     tgb.text("**🎯 Avg stages:** {avg_stages}", mode="md")
-                    tgb.text("**🪨 Proppant (klb):** {total_proppant_klb}", mode="md")
-                    tgb.text("**💧 Fluid (kbbl):** {total_fluid_kbbl}", mode="md")
+                    tgb.text("**🪨 Proppant (Mlb):** {total_proppant}", mode="md")
+                    tgb.text("**💧 Fluid (Mbbl):** {total_fluid}", mode="md")
                     tgb.text(
                         "**🪨 Intensity (lb/ft):** {avg_proppant_intensity}",
                         mode="md",
@@ -634,7 +632,7 @@ with tgb.Page() as geology_page:
                 layout={
                     "xaxis": {"title": {"text": "Well Type"}, "automargin": True},
                     "yaxis": {
-                        "title": {"text": "Average depth (ft)"},
+                        "title": {"text": "Average Depth (ft)"},
                         "automargin": True,
                     },
                 },
@@ -867,7 +865,7 @@ with tgb.Page() as frac_page:
 with tgb.Page() as map_page:
     sidebar()
     with tgb.part(class_name="main-content"):
-        tgb.text("# 🗺️ Full Spatial Analysis", mode="md")
+        tgb.text("# 🗺️ Spatial Analysis", mode="md")
 
         with tgb.layout(columns="1 1"):
             tgb.selector(
@@ -927,7 +925,7 @@ with tgb.Page() as wells_page:
                 data="{filtered_prod[filtered_prod['well_name']==selected_well]}",
                 x="date",
                 y=["oil_prod_m3", "gas_prod_km3", "water_prod_m3"],
-                color=['green', 'red', 'blue'],
+                color=["green", "red", "blue"],
                 height="400px",
             )
 
@@ -946,7 +944,7 @@ with tgb.Page() as data_page:
         tgb.button("Download Prod Data CSV", on_action=download_filtered_prod)
 
         tgb.text("### Frac Table", mode="md")
-        tgb.table(data="{filtered_frac}")       
+        tgb.table(data="{filtered_frac}")
         tgb.button("Download Frac Data CSV", on_action=download_filtered_frac)
 
 # Links of Interest Page
@@ -1108,7 +1106,7 @@ if __name__ == "__main__":
     gui.run(
         title="Vaca Muerta Dashboard",
         dark_mode=False,
-        host="0.0.0.0",  # IMPORTANT in Docker
+        host="0.0.0.0",
         port=port,
         use_reloader=False,
         debug=False,
