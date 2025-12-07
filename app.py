@@ -617,7 +617,7 @@ with tgb.Page() as geology_page:
                 x="depth",
                 height="350px",
                 layout={
-                    "xaxis": {"title": {"text": "Depth (ft"}},
+                    "xaxis": {"title": {"text": "Depth (ft)"}},
                     "yaxis": {"title": {"text": "Number of wells"}},
                 },
             )
@@ -927,6 +927,7 @@ with tgb.Page() as wells_page:
                 data="{filtered_prod[filtered_prod['well_name']==selected_well]}",
                 x="date",
                 y=["oil_prod_m3", "gas_prod_km3", "water_prod_m3"],
+                color=['green', 'red', 'blue'],
                 height="400px",
             )
 
