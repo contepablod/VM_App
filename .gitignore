@@ -1,0 +1,64 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+*.egg-info/
+*.egg
+*.log
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Build / packaging
+build/
+dist/
+*.spec
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+.notebooks/
+
+# VSCode / IDE settings
+.vscode/
+.idea/
+*.swp
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Taipy temp folders
+.taipy/
+.taipy_cache/
+.cache/
+
+# Local data that should NOT be pushed (optional)
+# 🔥 If your CSVs are large, uncomment these lines:
+# data/*.csv
+# user_data/
+# drafts/
+
+# Images (keep only small UI images)
+# 🔥 If images are large raw datasets, ignore them:
+# images/raw/
+# *.tiff
+# *.psd
+
+# Local environment variables
+.env
+.env.local
+
+# Vercel build output (if running locally)
+.vercel/
+
+# Docker
+*.tar
+
+drafts/
+user_data/
+data/datos-de-fractura-de-pozos-de-hidrocarburos-adjunto-iv-actualizacin-diaria.csv
+data/produccin-de-pozos-de-gas-y-petrleo-no-convencional.csv
