@@ -1,7 +1,7 @@
 # Use a slim Python base image
 FROM python:3.12-slim
 
-# Install system deps (if needed, can stay minimal)
+# Install system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
