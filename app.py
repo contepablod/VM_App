@@ -9,13 +9,13 @@ from taipy.gui.gui_actions import download, navigate
 # CONFIG & DATA
 # ------------------------------------------------------------------
 def download_filtered_prod(state):
-    csv_content = state.filtered_prod.to_csv(index=False)
-    return download(state, csv_content, "filtered_prod_data.csv")
+    csv_content = state.filtered_prod.to_csv(index=False).encode("utf-8")
+    return download(state, csv_content, name="filtered_prod_data.csv")
 
 
 def download_filtered_frac(state):
-    csv_content = state.filtered_frac.to_csv(index=False)
-    return download(state, csv_content, "filtered_frac_data.csv")
+    csv_content = state.filtered_frac.to_csv(index=False).encode("utf-8")
+    return download(state, csv_content, name="filtered_frac_data.csv")
 
 
 DATA_PATH = "data/well_frac_prod_data_VM.csv"
@@ -942,11 +942,10 @@ with tgb.Page() as data_page:
 
         tgb.text("### Production Table", mode="md")
         tgb.table(data="{filtered_prod}")
+        tgb.button("Download Prod Data CSV", on_action=download_filtered_prod)
 
         tgb.text("### Frac Table", mode="md")
-        tgb.table(data="{filtered_frac}")
-
-        tgb.button("Download Prod Data CSV", on_action=download_filtered_prod)
+        tgb.table(data="{filtered_frac}")       
         tgb.button("Download Frac Data CSV", on_action=download_filtered_frac)
 
 # Links of Interest Page
