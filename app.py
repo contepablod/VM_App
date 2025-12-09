@@ -18,16 +18,18 @@ def download_filtered_frac(state):
     return download(state, csv_content, name="filtered_frac_data.csv")
 
 
-DATA_PATH = "data/well_frac_prod_data_VM.csv"
+DATA_PATH_FRAC = "data/well_frac_data.csv"
 DATA_PATH_PROD = "data/well_prod_data.csv"
+DATA_PATH_DRILL = "data/drill_data.csv"
 HEADER1_IMAGE_PATH = "images/vm_map.png"
 HEADER2_IMAGE_PATH = "images/vm_rig_night.png"
 
-frac = pd.read_csv(DATA_PATH)
+frac = pd.read_csv(DATA_PATH_FRAC)
 prod = pd.read_csv(DATA_PATH_PROD)
+drill = pd.read_csv(DATA_PATH_DRILL)
 
 prod["date"] = pd.to_datetime(
-    pd.DataFrame({"year": prod["year"], "month": prod["month"], "day": 1}),
+    pd.DataFrame({"year": prod["year"], "month": prod["month"], "day": 31}),
     errors="coerce",
 )
 
@@ -47,6 +49,7 @@ year_range = [year_min, year_max]
 # Dataframes
 filtered_prod = prod.copy()
 filtered_frac = frac.copy()
+filtered_drill = drill.copy()
 top_oil_wells_df = pd.DataFrame()
 top_gas_wells_df = pd.DataFrame()
 prod_time_df = pd.DataFrame()
@@ -69,6 +72,10 @@ total_fluid = 0.0
 avg_proppant_intensity = 0.0
 avg_fluid_intensity = 0.0
 
+# KPIs – drilling
+drilled_wells = 0
+drilled_meters = 0.0
+
 # Map / spatial
 max_oil = 0
 max_gas = 0
@@ -83,9 +90,9 @@ selected_well = ""
 # Navigation state
 active_page = "overview"
 nav_overview = "nav-button active"
-nav_production = nav_frac = nav_map = nav_wells = nav_data = nav_links = nav_geology = (
-    nav_about
-) = "nav-button"
+nav_drilling = nav_production = nav_frac = nav_map = nav_wells = nav_data = (
+    nav_links
+) = nav_geology = nav_about = "nav-button"
 
 
 # ------------------------------------------------------------------
@@ -149,6 +156,7 @@ def update_state(state):
             d2 = d2[d2["well_type"] == well_type_filter]
 
     d2 = d2[(d2["year"] >= state.year_range[0]) & (d2["year"] <= state.year_range[1])]
+
     # ---- Add frac intensity metrics  ----
     if not d2.empty:
         d2 = d2.copy()
@@ -158,7 +166,59 @@ def update_state(state):
         d2["proppant_intensity_lbft"] = d2["proppant_pumped_lb"] / lateral
         d2["fluid_intensity_bblft"] = d2["fluid_pumped_bbl"] / lateral
 
+    # ---- Add cumulative production to frac from prod ----
+    if not d1.empty and not d2.empty:
+        cum = (
+            d1.groupby("well_id", as_index=False)[["oil_prod_m3", "gas_prod_km3"]]
+            .sum()
+            .rename(
+                columns={
+                    "oil_prod_m3": "oil_cum_m3_raw",
+                    "gas_prod_km3": "gas_cum_km3_raw",
+                }
+            )
+        )
+
+        # Scale to something comparable to your previous charts
+        cum["oil_cum_km3"] = cum["oil_cum_m3_raw"] / 1_000_000.0  # m³ -> ~Mm³/km³
+        cum["gas_cum_Mm3"] = cum["gas_cum_km3_raw"] / 1_000.0  # km³ -> ~Mm³
+
+        d2 = d2.merge(
+            cum[["well_id", "oil_cum_km3", "gas_cum_Mm3"]],
+            on="well_id",
+            how="left",
+        )
+
     state.filtered_frac = d2
+
+    # ---------- FILTER DRILL DATA ----------
+    d3 = drill.copy()
+
+    # company filter
+    if isinstance(company_filter, list):
+        if "All" not in company_filter:
+            d3 = d3[d3["company"].isin(company_filter)]
+    elif company_filter != "All":
+        d3 = d3[d3["company"] == company_filter]
+
+    # field filter
+    if isinstance(field_filter, list):
+        if "All" not in field_filter:
+            d3 = d3[d3["field"].isin(field_filter)]
+    elif field_filter != "All":
+        d3 = d3[d3["field"] == field_filter]
+
+    # year range
+    d3 = d3[(d3["year"] >= state.year_range[0]) & (d3["year"] <= state.year_range[1])]
+    state.filtered_drill = d3
+
+    # ---------- KPIs: drilling ----------
+    if not d3.empty:
+        state.drilled_wells = int(d3["wells"].sum())
+        state.drilled_meters = round(float(d3["meters"].sum()), 2)
+    else:
+        state.drilled_wells = 0
+        state.drilled_meters = 0.0
 
     # ---------- LATEST RECORD PER WELL (for KPIs & map) ----------
     if not d1.empty:
@@ -349,16 +409,17 @@ def update_nav(state):
     current = getattr(state, "active_page", "overview")
 
     state.nav_overview = "nav-button active" if current == "overview" else "nav-button"
+    state.nav_geology = "nav-button active" if current == "geology" else "nav-button"
+    state.nav_drilling = "nav-button active" if current == "drilling" else "nav-button"
+    state.nav_frac = "nav-button active" if current == "frac" else "nav-button"
     state.nav_production = (
         "nav-button active" if current == "production" else "nav-button"
     )
-    state.nav_frac = "nav-button active" if current == "frac" else "nav-button"
     state.nav_map = "nav-button active" if current == "map" else "nav-button"
     state.nav_wells = "nav-button active" if current == "wells" else "nav-button"
     state.nav_data = "nav-button active" if current == "data" else "nav-button"
     state.nav_links = "nav-button active" if current == "links" else "nav-button"
     state.nav_about = "nav-button active" if current == "about" else "nav-button"
-    state.nav_geology = "nav-button active" if current == "geology" else "nav-button"
 
 
 # ------------------------------------------------------------------
@@ -391,6 +452,18 @@ def go_overview(state):
     state.active_page = "/"
     update_nav(state)
     navigate(state, to="/")
+
+
+def go_geology(state):
+    state.active_page = "geology"
+    update_nav(state)
+    navigate(state, to="geology")
+
+
+def go_drilling(state):
+    state.active_page = "drilling"
+    update_nav(state)
+    navigate(state, to="drilling")
 
 
 def go_production(state):
@@ -435,21 +508,16 @@ def go_about(state):
     navigate(state, to="about")
 
 
-def go_geology(state):
-    state.active_page = "geology"
-    update_nav(state)
-    navigate(state, to="geology")
-
-
 def sidebar():
     with tgb.part(class_name="sidebar"):
         tgb.text("## 📘 Navigation", mode="md")
         tgb.button("🏠 OVERVIEW", class_name="{nav_overview}", on_action=go_overview)
         tgb.button("🪨 GEOLOGY", class_name="{nav_geology}", on_action=go_geology)
+        tgb.button("🛠️ DRILLING", class_name="{nav_drilling}", on_action=go_drilling)
+        tgb.button("💥 FRAC", class_name="{nav_frac}", on_action=go_frac)
         tgb.button(
             "📈 PRODUCTION", class_name="{nav_production}", on_action=go_production
         )
-        tgb.button("💥 FRAC", class_name="{nav_frac}", on_action=go_frac)
         tgb.button("🗺️ MAP", class_name="{nav_map}", on_action=go_map)
         tgb.button("🔎 WELLS", class_name="{nav_wells}", on_action=go_wells)
         tgb.button("📄 DATA", class_name="{nav_data}", on_action=go_data)
@@ -558,16 +626,34 @@ with tgb.Page() as overview_page:
                 )
 
         with tgb.part(class_name="card"):
-            with tgb.layout(columns="2 2"):
+            tgb.text("## KPIs", mode="md")
+            with tgb.layout(columns="1 1 1"):
                 with tgb.part():
-                    tgb.text("### 📊 Production KPIs", mode="md")
+                    tgb.text("### 📊 Production", mode="md")
                     # tgb.text("**#️⃣ Number of wells:** {n_wells}", mode="md")
                     tgb.text("**🛢️ Total Oil (Mm³):** {total_oil}", mode="md")
                     tgb.text("**🔥 Total Gas (Mm³):** {total_gas}", mode="md")
                     tgb.text("**💧 Total Water (Mm³):** {total_water}", mode="md")
-
                 with tgb.part():
-                    tgb.text("### 💥 Frac KPIs", mode="md")
+                    tgb.text("### 📌 Drilling", mode="md")
+                    tgb.text(
+                        "**Total Wells Drilled:** {drilled_wells}",
+                        mode="md",
+                    )
+                    tgb.text(
+                        "**Total Drilled Meters:** {drilled_meters}",
+                        mode="md",
+                    )
+                    tgb.text(
+                        "**Average Depth (ft):** {round(filtered_prod['depth'].mean(),2)}",
+                        mode="md",
+                    )
+                    tgb.text(
+                        "**Average Lateral Length (ft):** {round(filtered_frac['lateral_length_ft'].mean(),2)}",
+                        mode="md",
+                    )
+                with tgb.part():
+                    tgb.text("### 💥 Frac", mode="md")
                     tgb.text("**🧵 Frac'd wells:** {n_frac_wells}", mode="md")
                     tgb.text("**📏 Avg lateral (ft):** {avg_lateral_length}", mode="md")
                     tgb.text("**🎯 Avg stages:** {avg_stages}", mode="md")
@@ -644,6 +730,301 @@ with tgb.Page() as geology_page:
             mode="md",
         )
 
+# Drilling Page
+with tgb.Page() as drilling_page:
+    sidebar()
+    with tgb.part(class_name="main-content"):
+        tgb.text("# 🛠️ Drilling Analytics", mode="md")
+
+        # --- Wells & meters drilled per year ---
+        with tgb.part(class_name="card"):
+            tgb.text("### ⛏️ Activity per Year", mode="md")
+            with tgb.layout(columns="1 1"):
+                # Wells drilled per year
+                with tgb.part():
+                    tgb.text("Wells Drilled per Year", mode="md")
+                    tgb.chart(
+                        type="bar",
+                        data="{filtered_drill.groupby('year')['wells'].sum().reset_index()}",
+                        x="year",
+                        y="wells",
+                        height="320px",
+                        layout={
+                            "xaxis": {"title": {"text": "Year"}},
+                            "yaxis": {"title": {"text": "Wells Drilled"}},
+                        },
+                    )
+                # Meters drilled per year
+                with tgb.part():
+                    tgb.text("Meters Drilled per Year", mode="md")
+                    tgb.chart(
+                        type="bar",
+                        data="{filtered_drill.groupby('year')['meters'].sum().reset_index()}",
+                        x="year",
+                        y="meters",
+                        height="320px",
+                        layout={
+                            "xaxis": {"title": {"text": "Year"}},
+                            "yaxis": {"title": {"text": "Meters Drilled"}},
+                        },
+                    )
+
+        # --- Meters per company ---
+        with tgb.part(class_name="card"):
+            tgb.text("### 🏢 Meters Drilled by Company", mode="md")
+            tgb.chart(
+                type="bar",
+                data="{filtered_drill.groupby('company')['meters'].sum().reset_index()}",
+                x="company",
+                y="meters",
+                height="380px",
+                layout={
+                    "xaxis": {"title": {"text": "Company"}, "automargin": True},
+                    "yaxis": {"title": {"text": "Meters Drilled"}, "automargin": True},
+                },
+            )
+
+        # --- Depth distribution (same as before) ---
+        with tgb.part(class_name="card"):
+            tgb.text("### 📏 Depth Distribution (ft)", mode="md")
+            tgb.chart(
+                type="histogram",
+                data="{filtered_prod}",
+                x="depth",
+                height="350px",
+                layout={
+                    "xaxis": {"title": {"text": "Depth (ft)"}},
+                    "yaxis": {"title": {"text": "Count"}},
+                },
+            )
+
+        # --- Lateral length analysis (same idea as before) ---
+        tgb.text("### 📐 Lateral Length Analysis", mode="md")
+        with tgb.layout(columns="1 1"):
+            with tgb.part(class_name="card"):
+                tgb.text("Lateral Length Distribution", mode="md")
+                tgb.chart(
+                    type="histogram",
+                    data="{filtered_frac}",
+                    x="lateral_length_ft",
+                    height="350px",
+                    layout={
+                        "xaxis": {"title": {"text": "Lateral Length (ft)"}},
+                        "yaxis": {"title": {"text": "Count"}},
+                    },
+                )
+
+            with tgb.part(class_name="card"):
+                tgb.text("Average Lateral Length by Company", mode="md")
+                tgb.chart(
+                    type="bar",
+                    data="{filtered_frac.groupby('company')['lateral_length_ft'].mean().reset_index()}",
+                    x="company",
+                    y="lateral_length_ft",
+                    height="350px",
+                    layout={
+                        "xaxis": {"title": {"text": "Company"}, "automargin": True},
+                        "yaxis": {
+                            "title": {"text": "Avg Lateral (ft)"},
+                            "automargin": True,
+                        },
+                    },
+                )
+
+        tgb.text(
+            "_All drilling trends update dynamically with filters (company, field, well type, year range)._",
+            mode="md",
+        )
+
+
+# Frac Page
+with tgb.Page() as frac_page:
+    sidebar()
+    with tgb.part(class_name="main-content"):
+        tgb.text("# 💥 Frac Diagnostics", mode="md")
+
+        with tgb.part(class_name="card"):
+            tgb.text("### Frac Intensity KPIs", mode="md")
+            tgb.text(
+                "**🪨 Avg proppant intensity (lb/ft):** {avg_proppant_intensity}",
+                mode="md",
+            )
+            tgb.text(
+                "**💧 Avg fluid intensity (bbl/ft):** {avg_fluid_intensity}", mode="md"
+            )
+            tgb.text("**📏 Avg lateral length (ft):** {avg_lateral_length}", mode="md")
+            tgb.text("**🎯 Avg stages:** {avg_stages}", mode="md")
+
+        tgb.text("### Treatment Intensities", mode="md")
+        with tgb.layout(columns="1 1"):
+            with tgb.part(class_name="card"):
+                tgb.chart(
+                    type="scatter",
+                    data="{filtered_frac}",
+                    x="lateral_length_ft",
+                    y="proppant_pumped_lb",
+                    marker={"color": "orange", "opacity": 0.5},
+                    mode="markers",
+                    text="well_name",
+                    height="450px",
+                    layout={
+                        "xaxis": {"title": "Lateral Length (ft)"},
+                        "yaxis": {"title": "Proppant (lb)"},
+                    },
+                )
+
+            with tgb.part(class_name="card"):
+                tgb.chart(
+                    type="scatter",
+                    data="{filtered_frac}",
+                    x="lateral_length_ft",
+                    y="fluid_pumped_bbl",
+                    marker={"color": "deepskyblue", "opacity": 0.6},
+                    mode="markers",
+                    text="well_name",
+                    height="450px",
+                    layout={
+                        "xaxis": {"title": "Lateral Length (ft)"},
+                        "yaxis": {"title": "Fluid (bbl)"},
+                    },
+                )
+
+        tgb.text("### Depth / Lateral vs Production", mode="md")
+        with tgb.layout(columns="1 1"):
+            with tgb.part(class_name="card"):
+                tgb.text("📏 Lateral vs Cum Oil", mode="md")
+                tgb.chart(
+                    type="scatter",
+                    data="{filtered_frac}",
+                    x="lateral_length_ft",
+                    y="oil_cum_km3",
+                    marker={"color": "green", "opacity": 0.5},
+                    mode="markers",
+                    text="well_name",
+                    height="450px",
+                    layout={
+                        "xaxis": {"title": "Lateral Length (ft)"},
+                        "yaxis": {"title": "Cum Oil (km³)"},
+                    },
+                )
+
+            with tgb.part(class_name="card"):
+                tgb.text("📏 Lateral vs Cum Gas", mode="md")
+                tgb.chart(
+                    type="scatter",
+                    data="{filtered_frac}",
+                    x="lateral_length_ft",
+                    y="gas_cum_Mm3",
+                    marker={"color": "red", "opacity": 0.6},
+                    mode="markers",
+                    text="well_name",
+                    height="450px",
+                    layout={
+                        "xaxis": {"title": "Lateral Length (ft)"},
+                        "yaxis": {"title": "Cum Gas (Mm³)"},
+                    },
+                )
+
+        tgb.text("### Stages vs Production", mode="md")
+        with tgb.layout(columns="1 1"):
+            with tgb.part(class_name="card"):
+                tgb.text("#️⃣ Stages vs Cum Oil", mode="md")
+                tgb.chart(
+                    type="scatter",
+                    data="{filtered_frac}",
+                    x="number_stages",
+                    y="oil_cum_km3",
+                    marker={"color": "green", "opacity": 0.5},
+                    mode="markers",
+                    height="450px",
+                    layout={
+                        "xaxis": {"title": "Stages"},
+                        "yaxis": {"title": "Cumulative Oil (km³)"},
+                    },
+                )
+
+            with tgb.part(class_name="card"):
+                tgb.text("#️⃣ Stages vs Cum Gas", mode="md")
+                tgb.chart(
+                    type="scatter",
+                    data="{filtered_frac}",
+                    x="number_stages",
+                    y="gas_cum_Mm3",
+                    marker={"color": "red", "opacity": 0.5},
+                    mode="markers",
+                    height="450px",
+                    layout={
+                        "xaxis": {"title": "Stages"},
+                        "yaxis": {"title": "Cumulative Gas (Mm³)"},
+                    },
+                )
+
+        tgb.text("### Intensity vs Production", mode="md")
+        with tgb.layout(columns="1 1"):
+            with tgb.part(class_name="card"):
+                tgb.text("🪨 Proppant Intensity vs Cum Oil", mode="md")
+                tgb.chart(
+                    type="scatter",
+                    data="{filtered_frac}",
+                    x="proppant_intensity_lbft",
+                    y="oil_cum_km3",
+                    marker={"color": "orange", "opacity": 0.6},
+                    mode="markers",
+                    height="400px",
+                    layout={
+                        "xaxis": {"title": "Proppant Intensity (lb/ft)"},
+                        "yaxis": {"title": "Cumulative Oil (km³)"},
+                    },
+                )
+
+            with tgb.part(class_name="card"):
+                tgb.text("💧 Fluid Intensity vs Cum Oil", mode="md")
+                tgb.chart(
+                    type="scatter",
+                    data="{filtered_frac}",
+                    x="fluid_intensity_bblft",
+                    y="oil_cum_km3",
+                    marker={"color": "deepskyblue", "opacity": 0.6},
+                    mode="markers",
+                    height="400px",
+                    layout={
+                        "xaxis": {"title": "Fluid Intensity (bbl/ft)"},
+                        "yaxis": {"title": "Cumulative Oil (km³)"},
+                    },
+                )
+
+        with tgb.layout(columns="1 1"):
+            with tgb.part(class_name="card"):
+                tgb.text("🪨 Proppant Intensity vs Cum Gas", mode="md")
+                tgb.chart(
+                    type="scatter",
+                    data="{filtered_frac}",
+                    x="proppant_intensity_lbft",
+                    y="gas_cum_Mm3",
+                    marker={"color": "orange", "opacity": 0.6},
+                    mode="markers",
+                    height="400px",
+                    layout={
+                        "xaxis": {"title": "Proppant Intensity (lb/ft)"},
+                        "yaxis": {"title": "Cumulative Gas (Mm³)"},
+                    },
+                )
+
+            with tgb.part(class_name="card"):
+                tgb.text("💧 Fluid Intensity vs Cum Gas", mode="md")
+                tgb.chart(
+                    type="scatter",
+                    data="{filtered_frac}",
+                    x="fluid_intensity_bblft",
+                    y="gas_cum_Mm3",
+                    marker={"color": "deepskyblue", "opacity": 0.6},
+                    mode="markers",
+                    height="400px",
+                    layout={
+                        "xaxis": {"title": "Fluid Intensity (bbl/ft)"},
+                        "yaxis": {"title": "Cumulative Gas (Mm³)"},
+                    },
+                )
 # Production Page
 with tgb.Page() as production_page:
     sidebar()
@@ -723,201 +1104,6 @@ with tgb.Page() as production_page:
                     },
                     color="red",
                     height="400px",
-                )
-
-# Frac Page
-with tgb.Page() as frac_page:
-    sidebar()
-    with tgb.part(class_name="main-content"):
-        tgb.text("# 💥 Frac Diagnostics", mode="md")
-
-        # ---- Intensity KPIs ----
-        with tgb.part(class_name="card"):
-            tgb.text("### Frac Intensity KPIs", mode="md")
-            tgb.text(
-                "**🪨 Avg proppant intensity (lb/ft):** {avg_proppant_intensity}",
-                mode="md",
-            )
-            tgb.text(
-                "**💧 Avg fluid intensity (bbl/ft):** {avg_fluid_intensity}", mode="md"
-            )
-            tgb.text("**📏 Avg lateral length (ft):** {avg_lateral_length}", mode="md")
-            tgb.text("**🎯 Avg stages:** {avg_stages}", mode="md")
-
-        # ---- Treatment Intensities ----
-        tgb.text("### Treatment Intensities", mode="md")
-        with tgb.layout(columns="1 1"):
-            with tgb.part(class_name="card"):
-                tgb.chart(
-                    type="scatter",
-                    data="{filtered_frac}",
-                    x="lateral_length_ft",
-                    y="proppant_pumped_lb",
-                    marker={"color": "orange", "opacity": 0.5},
-                    mode="markers",
-                    text="well_name",
-                    height="450px",
-                    layout={
-                        "xaxis": {"title": "Lateral Length (ft)"},
-                        "yaxis": {"title": "Proppant (lb)"},
-                    },
-                )
-
-            with tgb.part(class_name="card"):
-                tgb.chart(
-                    type="scatter",
-                    data="{filtered_frac}",
-                    x="lateral_length_ft",
-                    y="fluid_pumped_bbl",
-                    marker={"color": "deepskyblue", "opacity": 0.6},
-                    mode="markers",
-                    text="well_name",
-                    height="450px",
-                    layout={
-                        "xaxis": {"title": "Lateral Length (ft)"},
-                        "yaxis": {"title": "Fluid (bbl)"},
-                    },
-                )
-
-        # ---- Depth / Lateral vs Production ----
-        tgb.text("### Depth / Lateral vs Production", mode="md")
-        with tgb.layout(columns="1 1"):
-            with tgb.part(class_name="card"):
-                tgb.text("📏 Depth vs Cum Oil", mode="md")
-                tgb.chart(
-                    type="scatter",
-                    data="{filtered_frac}",
-                    x="lateral_length_ft",
-                    y="oil_cum_km3",
-                    marker={"color": "green", "opacity": 0.5},
-                    mode="markers",
-                    text="well_name",
-                    height="450px",
-                    layout={
-                        "xaxis": {"title": "Lateral Length (ft)"},
-                        "yaxis": {"title": "Cum Oil (km³)"},
-                    },
-                )
-
-            with tgb.part(class_name="card"):
-                tgb.text("📏 Depth vs Cum Gas", mode="md")
-                tgb.chart(
-                    type="scatter",
-                    data="{filtered_frac}",
-                    x="lateral_length_ft",
-                    y="gas_cum_Mm3",
-                    marker={"color": "red", "opacity": 0.6},
-                    mode="markers",
-                    text="well_name",
-                    height="450px",
-                    layout={
-                        "xaxis": {"title": "Lateral Length (ft)"},
-                        "yaxis": {"title": "Cum Gas (Mm³)"},
-                    },
-                )
-
-        # ---- Stages vs Production ----
-        tgb.text("### Stages vs Production", mode="md")
-        with tgb.layout(columns="1 1"):
-            with tgb.part(class_name="card"):
-                tgb.text("#️⃣ Stages vs Cum Oil", mode="md")
-                tgb.chart(
-                    type="scatter",
-                    data="{filtered_frac}",
-                    x="number_stages",
-                    y="oil_cum_km3",
-                    marker={"color": "green", "opacity": 0.5},
-                    mode="markers",
-                    height="450px",
-                    layout={
-                        "xaxis": {"title": "Stages"},
-                        "yaxis": {"title": "Cumulative Oil (km³)"},
-                    },
-                )
-
-            with tgb.part(class_name="card"):
-                tgb.text("#️⃣ Stages vs Cum Gas", mode="md")
-                tgb.chart(
-                    type="scatter",
-                    data="{filtered_frac}",
-                    x="number_stages",
-                    y="gas_cum_Mm3",
-                    marker={"color": "red", "opacity": 0.5},
-                    mode="markers",
-                    height="450px",
-                    layout={
-                        "xaxis": {"title": "Stages"},
-                        "yaxis": {"title": "Cumulative Gas (Mm³)"},
-                    },
-                )
-
-        # ---- Intensity vs Oil Production ----
-        tgb.text("### Intensity vs Production", mode="md")
-        with tgb.layout(columns="1 1"):
-            with tgb.part(class_name="card"):
-                tgb.text("🪨 Proppant Intensity vs Cum Oil", mode="md")
-                tgb.chart(
-                    type="scatter",
-                    data="{filtered_frac}",
-                    x="proppant_intensity_lbft",
-                    y="oil_cum_km3",
-                    marker={"color": "orange", "opacity": 0.6},
-                    mode="markers",
-                    height="400px",
-                    layout={
-                        "xaxis": {"title": "Proppant Intensity (lb/ft)"},
-                        "yaxis": {"title": "Cumulative Oil (km³)"},
-                    },
-                )
-
-            with tgb.part(class_name="card"):
-                tgb.text("💧 Fluid Intensity vs Cum Oil", mode="md")
-                tgb.chart(
-                    type="scatter",
-                    data="{filtered_frac}",
-                    x="fluid_intensity_bblft",
-                    y="oil_cum_km3",
-                    marker={"color": "deepskyblue", "opacity": 0.6},
-                    mode="markers",
-                    height="400px",
-                    layout={
-                        "xaxis": {"title": "Fluid Intensity (bbl/ft)"},
-                        "yaxis": {"title": "Cumulative Oil (km³)"},
-                    },
-                )
-
-        # ---- Intensity vs Gas Production ----
-        with tgb.layout(columns="1 1"):
-            with tgb.part(class_name="card"):
-                tgb.text("🪨 Proppant Intensity vs Cum Gas", mode="md")
-                tgb.chart(
-                    type="scatter",
-                    data="{filtered_frac}",
-                    x="proppant_intensity_lbft",
-                    y="gas_cum_Mm3",
-                    marker={"color": "orange", "opacity": 0.6},
-                    mode="markers",
-                    height="400px",
-                    layout={
-                        "xaxis": {"title": "Proppant Intensity (lb/ft)"},
-                        "yaxis": {"title": "Cumulative Gas (Mm³)"},
-                    },
-                )
-
-            with tgb.part(class_name="card"):
-                tgb.text("💧 Fluid Intensity vs Cum Gas", mode="md")
-                tgb.chart(
-                    type="scatter",
-                    data="{filtered_frac}",
-                    x="fluid_intensity_bblft",
-                    y="gas_cum_Mm3",
-                    marker={"color": "deepskyblue", "opacity": 0.6},
-                    mode="markers",
-                    height="400px",
-                    layout={
-                        "xaxis": {"title": "Fluid Intensity (bbl/ft)"},
-                        "yaxis": {"title": "Cumulative Gas (Mm³)"},
-                    },
                 )
 
 # Map Page
@@ -1152,8 +1338,9 @@ if __name__ == "__main__":
     pages = {
         "/": overview_page,
         "geology": geology_page,
-        "production": production_page,
+        "drilling": drilling_page,
         "frac": frac_page,
+        "production": production_page,
         "map": map_page,
         "wells": wells_page,
         "data": data_page,
