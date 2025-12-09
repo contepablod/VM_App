@@ -62,4 +62,7 @@ drafts/
 user_data/
 data/datos-de-fractura-de-pozos-de-hidrocarburos-adjunto-iv-actualizacin-diaria.csv
 data/produccin-de-pozos-de-gas-y-petrleo-no-convencional.csv
+data/pozos-en-perforacin.csv
+data/metros-perforados.csv
+data/pozos-terminados.csv
 notebooks/
