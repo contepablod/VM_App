@@ -6,7 +6,7 @@ from taipy.gui.gui_actions import download, navigate
 
 
 # ------------------------------------------------------------------
-# CONFIG & DATA
+# HELPERS
 # ------------------------------------------------------------------
 def download_filtered_prod(state):
     csv_content = state.filtered_prod.to_csv(index=False).encode("utf-8")
@@ -18,29 +18,39 @@ def download_filtered_frac(state):
     return download(state, csv_content, name="filtered_frac_data.csv")
 
 
+# ------------------------------------------------------------------
+# CONFIG & DATA
+# ------------------------------------------------------------------
+MAX_TABLE_ROWS = 2000
+FRAC_SAMPLE_N = 5000
+
+# Paths
 DATA_PATH_FRAC = "data/well_frac_data.csv"
 DATA_PATH_PROD = "data/well_prod_data.csv"
 DATA_PATH_DRILL = "data/drill_data.csv"
+DATA_PATH_COMP = 'data/completion_data.csv'
 HEADER1_IMAGE_PATH = "images/vm_map.png"
 HEADER2_IMAGE_PATH = "images/vm_rig_night.png"
 
+# CSV's
 frac = pd.read_csv(DATA_PATH_FRAC)
 prod = pd.read_csv(DATA_PATH_PROD)
 drill = pd.read_csv(DATA_PATH_DRILL)
+comp = pd.read_csv(DATA_PATH_COMP)
 
 prod["date"] = pd.to_datetime(
     pd.DataFrame({"year": prod["year"], "month": prod["month"], "day": 31}),
     errors="coerce",
 )
 
+# LOV's
 company_lov = ["All"] + sorted(frac["company"].dropna().unique())
 field_lov = ["All"] + sorted(frac["field"].dropna().unique())
 well_type_lov = ["All"] + sorted(prod["well_type"].dropna().unique())
-
 year_min = int(prod["year"].min())
 year_max = int(prod["year"].max())
 
-# Filters (global defaults copied into state)
+# Filters
 company_filter = "All"
 field_filter = "All"
 well_type_filter = "All"
@@ -50,18 +60,40 @@ year_range = [year_min, year_max]
 filtered_prod = prod.copy()
 filtered_frac = frac.copy()
 filtered_drill = drill.copy()
+filtered_comp = comp.copy()
+
+# speed helpers
+filtered_frac_sample = frac.copy()
+filtered_prod_view = pd.DataFrame()
+filtered_frac_view = pd.DataFrame()
+
+# derived df's
 top_oil_wells_df = pd.DataFrame()
 top_gas_wells_df = pd.DataFrame()
 prod_time_df = pd.DataFrame()
 map_df = pd.DataFrame()
 wells_by_type_df = pd.DataFrame()
 depth_by_type_df = pd.DataFrame()
+avg_lateral_by_company_df = pd.DataFrame()
 
-# KPIs – production
-n_wells = 0
-total_oil = 0.0
-total_gas = 0.0
-total_water = 0.0
+# drilling/completion aggregated dfs
+drill_wells_by_year_df = pd.DataFrame()
+drill_meters_by_year_df = pd.DataFrame()
+drill_meters_by_company_df = pd.DataFrame()
+
+comp_by_year_df = pd.DataFrame()
+comp_by_company_df = pd.DataFrame()
+
+# Wells selected
+selected_prod_df = pd.DataFrame()
+selected_frac_df = pd.DataFrame()
+
+
+# KPIs – drilling
+drilled_wells = 0
+drilled_meters = 0.0
+avg_depth = 0.0
+avg_lateral = 0.0
 
 # KPIs – frac
 n_frac_wells = 0
@@ -72,9 +104,11 @@ total_fluid = 0.0
 avg_proppant_intensity = 0.0
 avg_fluid_intensity = 0.0
 
-# KPIs – drilling
-drilled_wells = 0
-drilled_meters = 0.0
+# KPIs – production
+n_wells = 0
+total_oil = 0.0
+total_gas = 0.0
+total_water = 0.0
 
 # Map / spatial
 max_oil = 0
@@ -102,16 +136,18 @@ def update_state(state):
     # ---------- FILTER PRODUCTION DATA ----------
     d1 = prod.copy()
 
-    # company filter
     company_filter = state.company_filter
+    field_filter = state.field_filter
+    well_type_filter = state.well_type_filter
+
+    # company filter
     if isinstance(company_filter, list):
         if "All" not in company_filter:
             d1 = d1[d1["company"].isin(company_filter)]
     elif company_filter != "All":
         d1 = d1[d1["company"] == company_filter]
 
-    # field filter
-    field_filter = state.field_filter
+    # field fIlter
     if isinstance(field_filter, list):
         if "All" not in field_filter:
             d1 = d1[d1["field"].isin(field_filter)]
@@ -119,7 +155,6 @@ def update_state(state):
         d1 = d1[d1["field"] == field_filter]
 
     # well type filter
-    well_type_filter = state.well_type_filter
     if isinstance(well_type_filter, list):
         if "All" not in well_type_filter:
             d1 = d1[d1["well_type"].isin(well_type_filter)]
@@ -129,6 +164,7 @@ def update_state(state):
     # year range
     d1 = d1[(d1["year"] >= state.year_range[0]) & (d1["year"] <= state.year_range[1])]
     state.filtered_prod = d1
+    state.filtered_prod_view = d1.head(MAX_TABLE_ROWS)
 
     # ---------- FILTER FRAC DATA ----------
     d2 = frac.copy()
@@ -160,9 +196,8 @@ def update_state(state):
     # ---- Add frac intensity metrics  ----
     if not d2.empty:
         d2 = d2.copy()
-        # avoid division by zero
-        lateral = d2["lateral_length_ft"].replace(0, pd.NA)
 
+        lateral = d2["lateral_length_ft"].replace(0, pd.NA)  # avoid division by zero
         d2["proppant_intensity_lbft"] = d2["proppant_pumped_lb"] / lateral
         d2["fluid_intensity_bblft"] = d2["fluid_pumped_bbl"] / lateral
 
@@ -178,9 +213,7 @@ def update_state(state):
                 }
             )
         )
-
-        # Scale to something comparable to your previous charts
-        cum["oil_cum_km3"] = cum["oil_cum_m3_raw"] / 1_000_000.0  # m³ -> ~Mm³/km³
+        cum["oil_cum_km3"] = cum["oil_cum_m3_raw"] / 1_000_000.0  # m³ -> ~Mm³
         cum["gas_cum_Mm3"] = cum["gas_cum_km3_raw"] / 1_000.0  # km³ -> ~Mm³
 
         d2 = d2.merge(
@@ -190,6 +223,23 @@ def update_state(state):
         )
 
     state.filtered_frac = d2
+    state.filtered_frac_view = d2.head(MAX_TABLE_ROWS)
+
+    # --- Avg lateral length by company precomputed ---
+    if not d2.empty:
+        state.avg_lateral_by_company_df = (
+            d2.groupby("company", as_index=False)["lateral_length_ft"]
+            .mean()
+            .sort_values("lateral_length_ft", ascending=False)
+        )
+    else:
+        state.avg_lateral_by_company_df = d2.head(0)
+
+    # sample for heavy scatters
+    if len(d2) > FRAC_SAMPLE_N:
+        state.filtered_frac_sample = d2.sample(FRAC_SAMPLE_N, random_state=0)
+    else:
+        state.filtered_frac_sample = d2
 
     # ---------- FILTER DRILL DATA ----------
     d3 = drill.copy()
@@ -212,6 +262,74 @@ def update_state(state):
     d3 = d3[(d3["year"] >= state.year_range[0]) & (d3["year"] <= state.year_range[1])]
     state.filtered_drill = d3
 
+    # Precompute drilling groupbys
+    if not d3.empty:
+        state.drill_wells_by_year_df = d3.groupby("year", as_index=False)["wells"].sum()
+        state.drill_meters_by_year_df = d3.groupby("year", as_index=False)[
+            "meters"
+        ].sum()
+        state.drill_meters_by_company_df = (
+            d3.groupby("company", as_index=False)["meters"]
+            .sum()
+            .sort_values("meters", ascending=False)
+        )
+    else:
+        state.drill_wells_by_year_df = d3.head(0)
+        state.drill_meters_by_year_df = d3.head(0)
+        state.drill_meters_by_company_df = d3.head(0)
+
+    # ---------- FILTER COMPLETION DATA ----------
+    d4 = comp.copy()
+
+    # Company filter
+    if isinstance(state.company_filter, list):
+        if "All" not in state.company_filter:
+            d4 = d4[d4["company"].isin(state.company_filter)]
+    elif state.company_filter != "All":
+        d4 = d4[d4["company"] == state.company_filter]
+
+    # Field filter
+    if isinstance(state.field_filter, list):
+        if "All" not in state.field_filter:
+            d4 = d4[d4["field"].isin(state.field_filter)]
+    elif state.field_filter != "All":
+        d4 = d4[d4["field"] == state.field_filter]
+
+    # Year filter
+    d4 = d4[(d4["year"] >= state.year_range[0]) & (d4["year"] <= state.year_range[1])]
+
+    state.filtered_comp = d4
+
+    # Precompute completion groupbys
+    if not d4.empty:
+        if "completion" in d4.columns:
+            state.comp_by_year_df = (
+                d4.groupby("year", as_index=False)["completion"]
+                .sum()
+                .rename(columns={"completion": "completions"})
+            )
+            state.comp_by_company_df = (
+                d4.groupby("company", as_index=False)["completion"]
+                .sum()
+                .rename(columns={"completion": "completions"})
+                .sort_values("completions", ascending=False)
+            )
+        else:
+            # fallback to counting rows if completion column missing
+            state.comp_by_year_df = (
+                d4.groupby("year", as_index=False)
+                .size()
+                .rename(columns={"size": "completions"})
+            )
+            state.comp_by_company_df = (
+                d4.groupby("company", as_index=False)
+                .size()
+                .rename(columns={"size": "completions"})
+            )
+    else:
+        state.comp_by_year_df = d4.head(0)
+        state.comp_by_company_df = d4.head(0)
+
     # ---------- KPIs: drilling ----------
     if not d3.empty:
         state.drilled_wells = int(d3["wells"].sum())
@@ -221,18 +339,19 @@ def update_state(state):
         state.drilled_meters = 0.0
 
     # ---------- LATEST RECORD PER WELL (for KPIs & map) ----------
-    if not d1.empty:
-        # idx_latest = d1.groupby("well_id")["month_count"].idxmax()
-        # latest = d1.loc[idx_latest]
-        latest = d1
-    else:
-        latest = d1.head(0)
+    latest = d1 if not d1.empty else d1.head(0)
 
     # ---------- KPIs: production ----------
-    state.n_wells = latest["well_id"].nunique()
-    state.total_oil = round(latest["oil_prod_m3"].sum() / 1_000_000, 2)
-    state.total_gas = round(latest["gas_prod_km3"].sum() / 1_000, 2)
-    state.total_water = round(latest["water_prod_m3"].sum() / 1_000_000, 2)
+    state.n_wells = latest["well_id"].nunique() if not latest.empty else 0
+    state.total_oil = (
+        round(latest["oil_prod_m3"].sum() / 1_000_000, 2) if not latest.empty else 0.0
+    )
+    state.total_gas = (
+        round(latest["gas_prod_km3"].sum() / 1_000, 2) if not latest.empty else 0.0
+    )
+    state.total_water = (
+        round(latest["water_prod_m3"].sum() / 1_000_000, 2) if not latest.empty else 0.0
+    )
 
     # ---------- WELLS BY TYPE ----------
     if not latest.empty:
@@ -245,7 +364,7 @@ def update_state(state):
     else:
         state.wells_by_type_df = latest.head(0)
 
-    # ---------- DEPTH BY WELL TYPE (for Geology page) ----------
+    # ---------- DEPTH BY WELL TYPE ----------
     if not latest.empty:
         state.depth_by_type_df = (
             latest.groupby("well_type", as_index=False)["depth"]
@@ -258,22 +377,30 @@ def update_state(state):
 
     # ---------- TOP OIL WELLS ----------
     state.top_oil_wells_df = (
-        latest[["well_name", "oil_cum_m3"]]
-        .dropna()
-        .groupby("well_name", as_index=False)["oil_cum_m3"]
-        .max()
-        .sort_values("oil_cum_m3", ascending=False)
-        .head(20)
+        (
+            latest[["well_name", "oil_cum_m3"]]
+            .dropna()
+            .groupby("well_name", as_index=False)["oil_cum_m3"]
+            .max()
+            .sort_values("oil_cum_m3", ascending=False)
+            .head(20)
+        )
+        if not latest.empty
+        else latest.head(0)
     )
 
     # ---------- TOP GAS WELLS ----------
     state.top_gas_wells_df = (
-        latest[["well_name", "gas_cum_km3"]]
-        .dropna()
-        .groupby("well_name", as_index=False)["gas_cum_km3"]
-        .max()
-        .sort_values("gas_cum_km3", ascending=False)
-        .head(20)
+        (
+            latest[["well_name", "gas_cum_km3"]]
+            .dropna()
+            .groupby("well_name", as_index=False)["gas_cum_km3"]
+            .max()
+            .sort_values("gas_cum_km3", ascending=False)
+            .head(20)
+        )
+        if not latest.empty
+        else latest.head(0)
     )
 
     # ---------- PRODUCTION OVER TIME ----------
@@ -290,25 +417,25 @@ def update_state(state):
 
     # ---------- MAP DATA ----------
     if not latest.empty:
-        latest = latest.copy()
+        latest2 = latest.copy()
 
         # basic stats
-        state.max_oil = latest["oil_cum_m3"].max()
-        state.max_gas = latest["gas_cum_km3"].max()
+        state.max_oil = latest2["oil_cum_m3"].max()
+        state.max_gas = latest2["gas_cum_km3"].max()
 
         # bubble sizes for OIL (95% quantile scaling)
-        oil = latest["oil_cum_m3"].fillna(0)
+        oil = latest2["oil_cum_m3"].fillna(0)
         q95_oil = oil.quantile(0.95)
         if q95_oil <= 0:
             q95_oil = 1.0
-        latest["oil_size"] = 4 + 36 * oil.clip(upper=q95_oil) / q95_oil
+        latest2["oil_size"] = 4 + 36 * oil.clip(upper=q95_oil) / q95_oil
 
         # bubble sizes for GAS
-        gas = latest["gas_cum_km3"].fillna(0)
+        gas = latest2["gas_cum_km3"].fillna(0)
         q95_gas = gas.quantile(0.95)
         if q95_gas <= 0:
             q95_gas = 1.0
-        latest["gas_size"] = 4 + 36 * gas.clip(upper=q95_gas) / q95_gas
+        latest2["gas_size"] = 4 + 36 * gas.clip(upper=q95_gas) / q95_gas
 
         # Map toggle
         metric = getattr(state, "map_metric", "Oil")
@@ -328,7 +455,7 @@ def update_state(state):
             border_color = "darkred"
 
         cutoff = metric_series.quantile(p / 100.0) if 0 <= p <= 100 else 0
-        map_latest = latest[metric_series >= cutoff].copy()
+        map_latest = latest2[metric_series >= cutoff].copy()
 
         map_latest["map_size"] = map_latest[size_col]
         map_latest["map_metric_value"] = metric_series.loc[map_latest.index]
@@ -378,20 +505,17 @@ def update_state(state):
         state.total_fluid = round(d2["fluid_pumped_bbl"].sum() / 1_000_100, 2)
 
         # intensity KPIs
-        if "proppant_intensity_lbft" in d2.columns:
-            state.avg_proppant_intensity = round(
-                d2["proppant_intensity_lbft"].dropna().mean(), 1
-            )
-        else:
-            state.avg_proppant_intensity = 0.0
+        state.avg_proppant_intensity = (
+            round(d2["proppant_intensity_lbft"].dropna().mean(), 1)
+            if "proppant_intensity_lbft" in d2.columns
+            else 0.0
+        )
 
-        if "fluid_intensity_bblft" in d2.columns:
-            state.avg_fluid_intensity = round(
-                d2["fluid_intensity_bblft"].dropna().mean(), 2
-            )
-        else:
-            state.avg_fluid_intensity = 0.0
-
+        state.avg_fluid_intensity = (
+            round(d2["fluid_intensity_bblft"].dropna().mean(), 2)
+            if "fluid_intensity_bblft" in d2.columns
+            else 0.0
+        )
     else:
         state.n_frac_wells = 0
         state.avg_lateral_length = 0.0
@@ -400,6 +524,30 @@ def update_state(state):
         state.total_fluid = 0.0
         state.avg_proppant_intensity = 0.0
         state.avg_fluid_intensity = 0.0
+
+    if not state.filtered_prod.empty:
+        state.avg_depth = round(state.filtered_prod["depth"].mean(), 2)
+    else:
+        state.avg_depth = 0.0
+
+    if not state.filtered_frac.empty:
+        state.avg_lateral = round(
+            state.filtered_frac["lateral_length_ft"].mean(), 2
+        )
+    else:
+        state.avg_lateral = 0.0
+
+    # ---------- Selected well data ----------
+    if state.selected_well:
+        state.selected_prod_df = state.filtered_prod[
+            state.filtered_prod["well_name"] == state.selected_well
+        ]
+        state.selected_frac_df = state.filtered_frac[
+            state.filtered_frac["well_name"] == state.selected_well
+        ]
+    else:
+        state.selected_prod_df = state.filtered_prod.head(0)
+        state.selected_frac_df = state.filtered_frac.head(0)
 
 
 # ------------------------------------------------------------------
@@ -588,7 +736,7 @@ with tgb.Page() as overview_page:
             with tgb.part():
                 tgb.text("&nbsp;", mode="md")
             with tgb.part():
-                tgb.image("images/vm_rig_night.png", width="100%")
+                tgb.image(HEADER2_IMAGE_PATH, width="100%")
 
         tgb.text("### 🔍 Filters", mode="md")
         with tgb.layout(columns="1 1 1 1"):
@@ -645,11 +793,11 @@ with tgb.Page() as overview_page:
                         mode="md",
                     )
                     tgb.text(
-                        "**Average Depth (ft):** {round(filtered_prod['depth'].mean(),2)}",
+                        "**Average Depth (ft):** {avg_depth}",
                         mode="md",
                     )
                     tgb.text(
-                        "**Average Lateral Length (ft):** {round(filtered_frac['lateral_length_ft'].mean(),2)}",
+                        "**Average Lateral Length (ft):** {avg_lateral}",
                         mode="md",
                     )
                 with tgb.part():
@@ -745,7 +893,7 @@ with tgb.Page() as drilling_page:
                     tgb.text("Wells Drilled per Year", mode="md")
                     tgb.chart(
                         type="bar",
-                        data="{filtered_drill.groupby('year')['wells'].sum().reset_index()}",
+                        data="{drill_wells_by_year_df}",
                         x="year",
                         y="wells",
                         height="320px",
@@ -759,7 +907,7 @@ with tgb.Page() as drilling_page:
                     tgb.text("Meters Drilled per Year", mode="md")
                     tgb.chart(
                         type="bar",
-                        data="{filtered_drill.groupby('year')['meters'].sum().reset_index()}",
+                        data="{drill_meters_by_year_df}",
                         x="year",
                         y="meters",
                         height="320px",
@@ -774,7 +922,7 @@ with tgb.Page() as drilling_page:
             tgb.text("### 🏢 Meters Drilled by Company", mode="md")
             tgb.chart(
                 type="bar",
-                data="{filtered_drill.groupby('company')['meters'].sum().reset_index()}",
+                data="{drill_meters_by_company_df}",
                 x="company",
                 y="meters",
                 height="380px",
@@ -784,7 +932,7 @@ with tgb.Page() as drilling_page:
                 },
             )
 
-        # --- Depth distribution (same as before) ---
+        # --- Depth distribution ---
         with tgb.part(class_name="card"):
             tgb.text("### 📏 Depth Distribution (ft)", mode="md")
             tgb.chart(
@@ -798,7 +946,7 @@ with tgb.Page() as drilling_page:
                 },
             )
 
-        # --- Lateral length analysis (same idea as before) ---
+        # --- Lateral length analysis ---
         tgb.text("### 📐 Lateral Length Analysis", mode="md")
         with tgb.layout(columns="1 1"):
             with tgb.part(class_name="card"):
@@ -818,7 +966,7 @@ with tgb.Page() as drilling_page:
                 tgb.text("Average Lateral Length by Company", mode="md")
                 tgb.chart(
                     type="bar",
-                    data="{filtered_frac.groupby('company')['lateral_length_ft'].mean().reset_index()}",
+                    data="{avg_lateral_by_company_df}",
                     x="company",
                     y="lateral_length_ft",
                     height="350px",
@@ -831,10 +979,45 @@ with tgb.Page() as drilling_page:
                     },
                 )
 
-        tgb.text(
-            "_All drilling trends update dynamically with filters (company, field, well type, year range)._",
-            mode="md",
-        )
+                # --- Completion Analytics ---
+        tgb.text("### 🎯 Completion Analytics", mode="md")
+
+        with tgb.layout(columns="1 1"):
+
+            # --- Completions per Year ---
+            with tgb.part(class_name="card"):
+                tgb.text("Completions per Year", mode="md")
+                tgb.chart(
+                    type="bar",
+                    data="{comp_by_year_df}",
+                    x="year",
+                    y="completions",
+                    height="350px",
+                    layout={
+                        "xaxis": {"title": {"text": "Year"}},
+                        "yaxis": {"title": {"text": "Completions"}},
+                    },
+                )
+
+            # --- Completions per Company ---
+            with tgb.part(class_name="card"):
+                tgb.text("Completions by Company", mode="md")
+                tgb.chart(
+                    type="bar",
+                    data="{comp_by_company_df}",
+                    x="company",
+                    y="completions",
+                    height="350px",
+                    layout={
+                        "xaxis": {"title": {"text": "Company"}, "automargin": True},
+                        "yaxis": {"title": {"text": "Completions"}},
+                    },
+                )
+
+                tgb.text(
+                    "_All drilling trends update dynamically with filters (company, field, well type, year range)._",
+                    mode="md",
+                )
 
 
 # Frac Page
@@ -860,7 +1043,7 @@ with tgb.Page() as frac_page:
             with tgb.part(class_name="card"):
                 tgb.chart(
                     type="scatter",
-                    data="{filtered_frac}",
+                    data="{filtered_frac_sample}",
                     x="lateral_length_ft",
                     y="proppant_pumped_lb",
                     marker={"color": "orange", "opacity": 0.5},
@@ -876,7 +1059,7 @@ with tgb.Page() as frac_page:
             with tgb.part(class_name="card"):
                 tgb.chart(
                     type="scatter",
-                    data="{filtered_frac}",
+                    data="{filtered_frac_sample}",
                     x="lateral_length_ft",
                     y="fluid_pumped_bbl",
                     marker={"color": "deepskyblue", "opacity": 0.6},
@@ -895,7 +1078,7 @@ with tgb.Page() as frac_page:
                 tgb.text("📏 Lateral vs Cum Oil", mode="md")
                 tgb.chart(
                     type="scatter",
-                    data="{filtered_frac}",
+                    data="{filtered_frac_sample}",
                     x="lateral_length_ft",
                     y="oil_cum_km3",
                     marker={"color": "green", "opacity": 0.5},
@@ -912,7 +1095,7 @@ with tgb.Page() as frac_page:
                 tgb.text("📏 Lateral vs Cum Gas", mode="md")
                 tgb.chart(
                     type="scatter",
-                    data="{filtered_frac}",
+                    data="{filtered_frac_sample}",
                     x="lateral_length_ft",
                     y="gas_cum_Mm3",
                     marker={"color": "red", "opacity": 0.6},
@@ -931,7 +1114,7 @@ with tgb.Page() as frac_page:
                 tgb.text("#️⃣ Stages vs Cum Oil", mode="md")
                 tgb.chart(
                     type="scatter",
-                    data="{filtered_frac}",
+                    data="{filtered_frac_sample}",
                     x="number_stages",
                     y="oil_cum_km3",
                     marker={"color": "green", "opacity": 0.5},
@@ -947,7 +1130,7 @@ with tgb.Page() as frac_page:
                 tgb.text("#️⃣ Stages vs Cum Gas", mode="md")
                 tgb.chart(
                     type="scatter",
-                    data="{filtered_frac}",
+                    data="{filtered_frac_sample}",
                     x="number_stages",
                     y="gas_cum_Mm3",
                     marker={"color": "red", "opacity": 0.5},
@@ -965,7 +1148,7 @@ with tgb.Page() as frac_page:
                 tgb.text("🪨 Proppant Intensity vs Cum Oil", mode="md")
                 tgb.chart(
                     type="scatter",
-                    data="{filtered_frac}",
+                    data="{filtered_frac_sample}",
                     x="proppant_intensity_lbft",
                     y="oil_cum_km3",
                     marker={"color": "orange", "opacity": 0.6},
@@ -981,7 +1164,7 @@ with tgb.Page() as frac_page:
                 tgb.text("💧 Fluid Intensity vs Cum Oil", mode="md")
                 tgb.chart(
                     type="scatter",
-                    data="{filtered_frac}",
+                    data="{filtered_frac_sample}",
                     x="fluid_intensity_bblft",
                     y="oil_cum_km3",
                     marker={"color": "deepskyblue", "opacity": 0.6},
@@ -998,7 +1181,7 @@ with tgb.Page() as frac_page:
                 tgb.text("🪨 Proppant Intensity vs Cum Gas", mode="md")
                 tgb.chart(
                     type="scatter",
-                    data="{filtered_frac}",
+                    data="{filtered_frac_sample}",
                     x="proppant_intensity_lbft",
                     y="gas_cum_Mm3",
                     marker={"color": "orange", "opacity": 0.6},
@@ -1014,7 +1197,7 @@ with tgb.Page() as frac_page:
                 tgb.text("💧 Fluid Intensity vs Cum Gas", mode="md")
                 tgb.chart(
                     type="scatter",
-                    data="{filtered_frac}",
+                    data="{filtered_frac_sample}",
                     x="fluid_intensity_bblft",
                     y="gas_cum_Mm3",
                     marker={"color": "deepskyblue", "opacity": 0.6},
@@ -1167,7 +1350,7 @@ with tgb.Page() as wells_page:
             tgb.text("### Production History", mode="md")
             tgb.chart(
                 type="line",
-                data="{filtered_prod[filtered_prod['well_name']==selected_well]}",
+                data="{selected_prod_df}",
                 x="date",
                 y=["oil_prod_m3", "gas_prod_km3", "water_prod_m3"],
                 color=["green", "red", "blue"],
@@ -1176,7 +1359,7 @@ with tgb.Page() as wells_page:
 
         with tgb.part(class_name="card"):
             tgb.text("### Frac Treatment", mode="md")
-            tgb.table(data="{filtered_frac[filtered_frac['well_name']==selected_well]}")
+            tgb.table(data="{selected_frac_df}")
 
 # Data Page
 with tgb.Page() as data_page:
@@ -1185,11 +1368,11 @@ with tgb.Page() as data_page:
         tgb.text("# 📄 Data Explorer", mode="md")
 
         tgb.text("### Production Table", mode="md")
-        tgb.table(data="{filtered_prod}")
+        tgb.table(data="{filtered_prod_view}")
         tgb.button("Download Prod Data CSV", on_action=download_filtered_prod)
 
         tgb.text("### Frac Table", mode="md")
-        tgb.table(data="{filtered_frac}")
+        tgb.table(data="{filtered_frac_view}")
         tgb.button("Download Frac Data CSV", on_action=download_filtered_frac)
 
 # Links of Interest Page
