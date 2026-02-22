@@ -1,0 +1,2 @@
+"""Vaca Muerta dashboard package."""
+

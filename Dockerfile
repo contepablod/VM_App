@@ -1,25 +1,18 @@
-# Use a slim Python base image
-FROM python:3.12-slim
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
-# Install system deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# Workdir
 WORKDIR /app
+ENV PYTHONUNBUFFERED=1
 
-# Copy requirements first (better for caching)
-COPY requirements.txt .
+# Copy dependency metadata first for better caching.
+COPY pyproject.toml ./
 
-# Install Python deps
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies into the project virtual environment.
+RUN uv sync --no-dev --no-install-project
 
-# Copy the rest of the app
+# Copy the rest of the app.
 COPY . .
 
-# Expose Taipy port
 EXPOSE 5000
 
-# Start the app
-CMD ["python", "app.py"]
+# Run through uv-managed environment.
+CMD ["uv", "run", "app.py"]

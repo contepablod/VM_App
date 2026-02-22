@@ -65,4 +65,5 @@ data/produccin-de-pozos-de-gas-y-petrleo-no-convencional.csv
 data/pozos-en-perforacin.csv
 data/metros-perforados.csv
 data/pozos-terminados.csv
+data/vm_analytics.db
 notebooks/
