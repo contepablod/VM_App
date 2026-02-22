@@ -38,10 +38,15 @@ PORT=8080 uv run app.py
 
 Then open `http://localhost:8080`.
 
-## SQL Copilot Chat (OpenRouter + SQL tools)
+## SQL Copilot Chat (OpenRouter + SQL + Web search)
 
-The app now includes a **Chat** page that can query the local SQLite cache with read-only SQL tool calling.
-You can paste your OpenRouter API key directly in the chat panel (`OpenRouter API Key` field).
+The app now includes a **Chat** page that can:
+- query the local SQLite cache with read-only SQL tool calling
+- search the public web with Tavily (`web_search` tool)
+
+You can paste keys directly in the chat panel:
+- `OpenRouter API Key` (required)
+- `Tavily API Key (optional)` for web search
 
 Set your OpenRouter key before running:
 
@@ -53,6 +58,12 @@ Optional model override:
 
 ```bash
 export OPENROUTER_MODEL="openai/gpt-4.1-mini"
+```
+
+Optional Tavily key for web search:
+
+```bash
+export TAVILY_API_KEY="your_tavily_key_here"
 ```
 
 Then run the app and open the **🤖 CHAT** page from the sidebar.
@@ -69,6 +80,7 @@ Run one chat question directly from CLI (no UI):
 
 ```bash
 OPENROUTER_API_KEY="your_key_here" uv run python scripts/debug_chat.py --debug "count rows in prod"
+OPENROUTER_API_KEY="your_key_here" TAVILY_API_KEY="your_tavily_key_here" uv run python scripts/debug_chat.py --debug "latest argentina shale news"
 ```
 
 Docker with verbose logs:
@@ -77,6 +89,7 @@ Docker with verbose logs:
 docker build -t vm-app .
 docker run --rm -p 5000:5000 \
   -e OPENROUTER_API_KEY="your_key_here" \
+  -e TAVILY_API_KEY="your_tavily_key_here" \
   -e VM_CHAT_DEBUG=1 \
   -e LOG_LEVEL=INFO \
   -e VM_OPENROUTER_MAX_TOKENS=512 \

@@ -30,6 +30,11 @@ def parse_args():
         help="OpenRouter API key (fallback: OPENROUTER_API_KEY env var).",
     )
     parser.add_argument(
+        "--web-api-key",
+        default="",
+        help="Tavily API key for web search (fallback: TAVILY_API_KEY env var).",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable verbose VM chat debug logs.",
@@ -52,6 +57,7 @@ def main():
 
     question = " ".join(args.question).strip()
     api_key = (args.api_key or os.getenv("OPENROUTER_API_KEY", "")).strip()
+    web_api_key = (args.web_api_key or os.getenv("TAVILY_API_KEY", "")).strip()
 
     if not question:
         print("error: question is empty", file=sys.stderr)
@@ -70,7 +76,9 @@ def main():
     print(f"[debug-chat] question={question}")
 
     start = time.perf_counter()
-    result = _run_sql_agent_job(question, args.model, api_key, history=[])
+    result = _run_sql_agent_job(
+        question, args.model, api_key, history=[], web_search_api_key=web_api_key
+    )
     elapsed = time.perf_counter() - start
 
     print(f"[debug-chat] elapsed={elapsed:.2f}s")

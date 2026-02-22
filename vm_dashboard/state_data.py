@@ -22,10 +22,13 @@ MAX_SQL_TOOL_LOOPS = _env_int("VM_MAX_SQL_TOOL_LOOPS", 3)
 MAX_AGENT_HISTORY = 12
 OPENROUTER_TIMEOUT_SECONDS = _env_int("VM_OPENROUTER_TIMEOUT_SECONDS", 25)
 OPENROUTER_MAX_TOKENS = _env_int("VM_OPENROUTER_MAX_TOKENS", 1024)
+WEB_SEARCH_TIMEOUT_SECONDS = _env_int("VM_WEB_SEARCH_TIMEOUT_SECONDS", 12)
+WEB_SEARCH_MAX_RESULTS = _env_int("VM_WEB_SEARCH_MAX_RESULTS", 5)
 
 SQLITE_DB_PATH = "data/vm_analytics.db"
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_DEFAULT_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4.1-mini")
+TAVILY_SEARCH_API_URL = os.getenv("TAVILY_SEARCH_API_URL", "https://api.tavily.com/search")
 
 # Paths
 DATA_PATH_FRAC = "data/well_frac_data.csv"
@@ -131,6 +134,7 @@ sql_agent_history = []
 openrouter_model = OPENROUTER_DEFAULT_MODEL
 openrouter_api_key_input = ""
 openrouter_key_status = "Missing"
+web_search_api_key_input = ""
 chat_runtime_status = "Initializing..."
 sql_last_query = ""
 sql_last_result = pd.DataFrame()

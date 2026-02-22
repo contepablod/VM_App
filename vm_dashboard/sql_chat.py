@@ -24,6 +24,9 @@ from .state_data import (
     OPENROUTER_MAX_TOKENS,
     OPENROUTER_TIMEOUT_SECONDS,
     SQLITE_DB_PATH,
+    TAVILY_SEARCH_API_URL,
+    WEB_SEARCH_MAX_RESULTS,
+    WEB_SEARCH_TIMEOUT_SECONDS,
     comp,
     drill,
     frac,
@@ -244,6 +247,89 @@ def _resolve_openrouter_api_key(state):
     return "", "missing"
 
 
+def _resolve_web_search_api_key(state):
+    ui_key = str(getattr(state, "web_search_api_key_input", "") or "").strip()
+    if ui_key:
+        return ui_key, "UI input"
+
+    env_value = os.getenv("TAVILY_API_KEY", "").strip()
+    if env_value:
+        return env_value, "env var"
+
+    return "", "missing"
+
+
+def _tool_web_search(query, api_key, max_results=WEB_SEARCH_MAX_RESULTS):
+    if not api_key:
+        return {
+            "ok": False,
+            "error": "Web search API key is missing. Set TAVILY_API_KEY or provide it in Chat.",
+        }
+
+    q = str(query or "").strip()
+    if not q:
+        return {"ok": False, "error": "Search query is empty."}
+
+    try:
+        max_results = int(max_results)
+    except (TypeError, ValueError):
+        max_results = WEB_SEARCH_MAX_RESULTS
+    max_results = max(1, min(max_results, 10))
+
+    payload = {
+        "api_key": api_key,
+        "query": q,
+        "search_depth": "basic",
+        "max_results": max_results,
+        "include_answer": False,
+        "include_raw_content": False,
+    }
+    request = urlrequest.Request(
+        TAVILY_SEARCH_API_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urlrequest.urlopen(request, timeout=WEB_SEARCH_TIMEOUT_SECONDS) as response:
+            body = response.read().decode("utf-8")
+            parsed = json.loads(body)
+    except urlerror.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="ignore")
+        return {"ok": False, "error": f"Web search HTTP {exc.code}: {details[:500]}"}
+    except urlerror.URLError as exc:
+        return {"ok": False, "error": f"Web search connection error: {exc.reason}"}
+    except Exception as exc:
+        return {"ok": False, "error": f"Web search error: {exc}"}
+
+    results = []
+    for item in parsed.get("results", [])[:max_results]:
+        title = str(item.get("title", "") or "").strip()
+        url = str(item.get("url", "") or "").strip()
+        content = str(item.get("content", "") or "").strip()
+        if content:
+            content = content[:500]
+        if not (title or url or content):
+            continue
+        results.append(
+            {
+                "title": title,
+                "url": url,
+                "snippet": content,
+                "score": item.get("score"),
+                "published_date": item.get("published_date"),
+            }
+        )
+
+    return {
+        "ok": True,
+        "query": q,
+        "source_count": len(results),
+        "sources": results,
+    }
+
+
 def _openrouter_headers(api_key):
     if not api_key:
         raise RuntimeError("OpenRouter API key is not set.")
@@ -328,12 +414,14 @@ def _sql_agent_system_prompt():
         "Use tools to answer with verified numbers. "
         "When a question needs data, call `run_sql`. "
         "For schema/domain understanding, call `search_knowledge`. "
+        "For current events, external context, or anything outside local tables, call `web_search`. "
         "Never invent values. If data is unavailable, say so clearly. "
-        "Keep answers concise and include units when relevant."
+        "Keep answers concise and include units when relevant. "
+        "When using web_search, cite source URLs."
     )
 
 
-def _run_sql_agent(question, model_name, api_key, history=None):
+def _run_sql_agent(question, model_name, api_key, history=None, web_search_api_key=""):
     _debug(
         "SQL agent start model=%s question_len=%s history_len=%s",
         model_name,
@@ -388,6 +476,23 @@ def _run_sql_agent(question, model_name, api_key, history=None):
                 "parameters": {
                     "type": "object",
                     "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": (
+                    "Search the public web for recent/external information and return source URLs."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "max_results": {"type": "integer", "minimum": 1, "maximum": 10},
+                    },
                     "required": ["query"],
                 },
             },
@@ -454,6 +559,13 @@ def _run_sql_agent(question, model_name, api_key, history=None):
                         args.get("query", question),
                         top_k=args.get("top_k", 4),
                     )
+                elif tool_name == "web_search":
+                    _debug("Tool web_search called")
+                    tool_result = _tool_web_search(
+                        args.get("query", question),
+                        api_key=web_search_api_key,
+                        max_results=args.get("max_results", WEB_SEARCH_MAX_RESULTS),
+                    )
                 else:
                     _LOGGER.warning("Unknown tool requested by model: %s", tool_name)
                     tool_result = {"ok": False, "error": f"Unknown tool: {tool_name}"}
@@ -477,10 +589,7 @@ def _run_sql_agent(question, model_name, api_key, history=None):
         break
 
     if not final_answer:
-        final_answer = (
-            "I could not complete the SQL tool-calling loop. "
-            "Try a simpler question or inspect the SQL preview below."
-        )
+        final_answer = "I could not complete the tool-calling loop. Try a simpler question."
         _LOGGER.warning("SQL agent finished without final answer after tool loops")
 
     new_history = (
@@ -497,9 +606,15 @@ def _run_sql_agent(question, model_name, api_key, history=None):
     }
 
 
-def _run_sql_agent_job(question, model_name, api_key, history):
+def _run_sql_agent_job(question, model_name, api_key, history, web_search_api_key):
     try:
-        return _run_sql_agent(question, model_name, api_key, history)
+        return _run_sql_agent(
+            question,
+            model_name,
+            api_key,
+            history,
+            web_search_api_key=web_search_api_key,
+        )
     except Exception as exc:
         _LOGGER.exception("SQL agent job crashed")
         return {
@@ -585,7 +700,11 @@ def _update_chat_runtime_status(state):
 
 
 def on_chat_settings_change(state, var_name, var_value):
-    if var_name in ["openrouter_api_key_input", "openrouter_model"]:
+    if var_name in [
+        "openrouter_api_key_input",
+        "openrouter_model",
+        "web_search_api_key_input",
+    ]:
         _update_chat_runtime_status(state)
 
 
@@ -633,19 +752,23 @@ def on_chat_action(state, var_name, payload):
         or OPENROUTER_DEFAULT_MODEL
     )
     history = list(getattr(state, "sql_agent_history", []))[-MAX_AGENT_HISTORY:]
+    web_search_api_key, web_search_key_source = _resolve_web_search_api_key(state)
     state.chat_busy = True
     _update_chat_runtime_status(state)
     _debug(
-        "Chat request start model=%s key_source=%s key=%s question_len=%s history_len=%s",
+        "Chat request start model=%s key_source=%s web_key_source=%s key=%s question_len=%s history_len=%s",
         model_name,
         api_key_source,
+        web_search_key_source,
         _mask_secret(api_key),
         len(user_message),
         len(history),
     )
     try:
         start_time = time.perf_counter()
-        result = _run_sql_agent_job(user_message, model_name, api_key, history)
+        result = _run_sql_agent_job(
+            user_message, model_name, api_key, history, web_search_api_key
+        )
         _debug(
             "Chat request end elapsed=%.2fs ok=%s answer_len=%s",
             time.perf_counter() - start_time,

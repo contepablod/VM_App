@@ -730,10 +730,10 @@ with tgb.Page() as chat_page:
                 "**Model:** `{openrouter_model}`\n\n"
                 "**Note:** API key is kept in session memory only.\n\n"
                 "This assistant uses OpenRouter tool-calling with read-only SQL over local tables: "
-                "`prod`, `frac`, `drill`, `completion`.",
+                "`prod`, `frac`, `drill`, `completion` and optional web search (Tavily).",
                 mode="md",
             )
-            with tgb.layout(columns="2 2 1"):
+            with tgb.layout(columns="2 2 2 1"):
                 tgb.input(
                     value="{openrouter_model}",
                     label="OpenRouter model",
@@ -742,6 +742,12 @@ with tgb.Page() as chat_page:
                 tgb.input(
                     value="{openrouter_api_key_input}",
                     label="OpenRouter API Key",
+                    password=True,
+                    on_change=on_chat_settings_change,
+                )
+                tgb.input(
+                    value="{web_search_api_key_input}",
+                    label="Tavily API Key (optional)",
                     password=True,
                     on_change=on_chat_settings_change,
                 )

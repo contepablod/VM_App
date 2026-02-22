@@ -449,6 +449,8 @@ def on_init(state):
         state.openrouter_model = OPENROUTER_DEFAULT_MODEL
     if not hasattr(state, "openrouter_api_key_input"):
         state.openrouter_api_key_input = ""
+    if not hasattr(state, "web_search_api_key_input"):
+        state.web_search_api_key_input = ""
     if not hasattr(state, "chat_messages") or not state.chat_messages:
         state.chat_messages = [["m0", _chat_welcome_message(), "assistant"]]
     if not hasattr(state, "chat_users"):
@@ -550,4 +552,3 @@ def sidebar():
         tgb.button("🤖 CHAT", class_name="{nav_chat}", on_action=go_chat)
         tgb.button("🔗 LINKS", class_name="{nav_links}", on_action=go_links)
         tgb.button("ℹ️ ABOUT", class_name="{nav_about}", on_action=go_about)
-
