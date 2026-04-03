@@ -53,6 +53,7 @@ Thumbs.db
 .env.local
 
 # uv cache
+.uv-cache/
 .uv_cache/
 uv-cache/
 
