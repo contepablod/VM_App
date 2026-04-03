@@ -1,19 +1,9 @@
 import taipy.gui.builder as tgb
 
+from . import state_data
 from .downloads import download_filtered_frac, download_filtered_prod
-from .sql_chat import clear_chat, on_chat_action, on_chat_settings_change
-from .state_data import (
-    HEADER1_IMAGE_PATH,
-    HEADER2_IMAGE_PATH,
-    chat_users,
-    company_lov,
-    field_lov,
-    prod,
-    well_type_lov,
-    year_max,
-    year_min,
-)
-from .state_handlers import on_change, sidebar
+from .sql_chat import clear_chat, on_chat_action, on_chat_settings_change, rebuild_sql_cache
+from .state_handlers import on_change, reload_dashboard_data, sidebar
 
 
 # ------------------------------------------------------------------
@@ -21,12 +11,12 @@ from .state_handlers import on_change, sidebar
 # ------------------------------------------------------------------
 with tgb.Page() as overview_page:
     sidebar()
-    with tgb.part(class_name="main_content"):
+    with tgb.part(class_name="main-content"):
         tgb.text("# 🛢️ Vaca Muerta Formation – Overview", mode="md")
         with tgb.part(class_name="card"):
             with tgb.layout(columns="1 2"):
                 with tgb.part():
-                    tgb.image(HEADER1_IMAGE_PATH, width="100%", height="100%")
+                    tgb.image(state_data.HEADER1_IMAGE_PATH, width="100%", height="100%")
                 with tgb.part(class_name="card"):
                     tgb.text(
                         "### 🌎 About Vaca Muerta\n\n"
@@ -57,16 +47,6 @@ with tgb.Page() as overview_page:
                         "of Añelo, has experienced rapid expansion as workers and businesses move in to support the growing industry. "
                         "Local governments, companies, and national agencies have begun planning to expand housing, public services, "
                         "and infrastructure to accommodate this development.\n\n"
-                        # "At the same time, Vaca Muerta has become the subject of important environmental and social discussions. "
-                        # "Scientific and environmental reports highlight concerns about the large volumes of water required for "
-                        # "hydraulic fracturing in an area where water resources are limited. Researchers have also examined the "
-                        # "increase in seismic activity associated with wastewater disposal wells in parts of the basin. Air quality, "
-                        # "methane emissions, and the long-term management of drilling waste have become central topics in regional "
-                        # "environmental assessments. Social studies have documented the pressure that rapid industrialization places "
-                        # "on local communities, which face rising costs of living, growing demand for services, and changes to "
-                        # "traditional economic activities. These issues have led experts to call for strong regulation, continuous "
-                        # "monitoring, and clear planning to ensure that the benefits of development are balanced with protection of "
-                        # "the environment and the well-being of nearby populations.\n\n"
                         "Taken as a whole, Vaca Muerta represents an extraordinary combination of geological richness, technological "
                         "challenge, economic potential, and environmental complexity. It is one of the most influential energy "
                         "projects in Latin America and continues to shape Argentina’s national policy, international partnerships, "
@@ -79,14 +59,14 @@ with tgb.Page() as overview_page:
             with tgb.part():
                 tgb.text("&nbsp;", mode="md")
             with tgb.part():
-                tgb.image(HEADER2_IMAGE_PATH, width="100%")
+                tgb.image(state_data.HEADER2_IMAGE_PATH, width="100%")
 
         tgb.text("### 🔍 Filters", mode="md")
         with tgb.layout(columns="1 1 1 1"):
             tgb.selector(
                 label="Company",
                 value="{company_filter}",
-                lov=company_lov,
+                lov="{company_lov}",
                 multiple=True,
                 dropdown=True,
                 on_change=on_change,
@@ -94,7 +74,7 @@ with tgb.Page() as overview_page:
             tgb.selector(
                 label="Field",
                 value="{field_filter}",
-                lov=field_lov,
+                lov="{field_lov}",
                 multiple=True,
                 dropdown=True,
                 on_change=on_change,
@@ -102,7 +82,7 @@ with tgb.Page() as overview_page:
             tgb.selector(
                 label="Well Type",
                 value="{well_type_filter}",
-                lov=well_type_lov,
+                lov="{well_type_lov}",
                 multiple=True,
                 dropdown=True,
                 on_change=on_change,
@@ -111,8 +91,8 @@ with tgb.Page() as overview_page:
                 tgb.text("📅 Year Range")
                 tgb.slider(
                     value="{year_range}",
-                    min=year_min,
-                    max=year_max,
+                    min="{year_min}",
+                    max="{year_max}",
                     on_change=on_change,
                 )
 
@@ -121,7 +101,6 @@ with tgb.Page() as overview_page:
             with tgb.layout(columns="1 1 1"):
                 with tgb.part():
                     tgb.text("### 📊 Production", mode="md")
-                    # tgb.text("**#️⃣ Number of wells:** {n_wells}", mode="md")
                     tgb.text("**🛢️ Total Oil (Mm³):** {total_oil}", mode="md")
                     tgb.text("**🔥 Total Gas (Mm³):** {total_gas}", mode="md")
                     tgb.text("**💧 Total Water (Mm³):** {total_water}", mode="md")
@@ -553,7 +532,7 @@ with tgb.Page() as frac_page:
 # Production Page
 with tgb.Page() as production_page:
     sidebar()
-    with tgb.part(class_name="main_content"):
+    with tgb.part(class_name="main-content"):
         tgb.text("# 📈 Production Analysis", mode="md")
         with tgb.layout(columns="1 2"):
             with tgb.part(class_name="card"):
@@ -602,7 +581,7 @@ with tgb.Page() as production_page:
                             "automargin": True,
                         },
                         "yaxis": {
-                            "title": {"text": "Cummulative Oil (m3)", "standoff": 10},
+                            "title": {"text": "Cumulative Oil (m3)", "standoff": 10},
                             "automargin": True,
                         },
                     },
@@ -623,7 +602,7 @@ with tgb.Page() as production_page:
                             "automargin": True,
                         },
                         "yaxis": {
-                            "title": {"text": "Cummulative Gas (km3)", "standoff": 10},
+                            "title": {"text": "Cumulative Gas (km3)", "standoff": 10},
                             "automargin": True,
                         },
                     },
@@ -679,11 +658,10 @@ with tgb.Page() as wells_page:
     with tgb.part(class_name="main-content"):
         tgb.text("# 🔎 Well Explorer", mode="md")
 
-        well_lov = sorted(prod["well_name"].dropna().unique())
         tgb.selector(
             label="Select Well",
             value="{selected_well}",
-            lov=well_lov,
+            lov="{well_lov}",
             dropdown=True,
             on_change=on_change,
         )
@@ -709,6 +687,18 @@ with tgb.Page() as data_page:
     sidebar()
     with tgb.part(class_name="main-content"):
         tgb.text("# 📄 Data Explorer", mode="md")
+
+        with tgb.part(class_name="card"):
+            tgb.text(
+                "**Data runtime:** {data_runtime_status}\n\n"
+                "**SQL cache:** {sql_cache_status}\n\n"
+                "If CSV files were refreshed on Render while the web service stayed up, reload the in-memory "
+                "data and SQL cache before exploring updated results.",
+                mode="md",
+            )
+            with tgb.layout(columns="1 1 3"):
+                tgb.button("Reload Data & SQL Cache", on_action=reload_dashboard_data)
+                tgb.button("Rebuild SQL Cache", on_action=rebuild_sql_cache)
 
         tgb.text("### Production Table", mode="md")
         tgb.table(data="{filtered_prod_view}")
@@ -756,7 +746,7 @@ with tgb.Page() as chat_page:
         with tgb.part(class_name="card"):
             tgb.chat(
                 messages="{chat_messages}",
-                users=chat_users,
+                users=state_data.chat_users,
                 sender_id="user",
                 on_action=on_chat_action,
                 show_sender=True,
@@ -824,32 +814,6 @@ with tgb.Page() as links_page:
             mode="md",
         )
 
-        # with tgb.part(class_name="card"):
-        #     tgb.text("### 🧪 Technical / Geological", mode="md")
-        #     tgb.text(
-        #         "- Shale reservoir characterization\n"
-        #         "- Hydraulic fracturing design and best practices\n"
-        #         "- Horizontal drilling and completion technologies\n",
-        #         mode="md",
-        #     )
-
-        # with tgb.part(class_name="card"):
-        #     tgb.text("### 🏛️ Regulatory & Policy", mode="md")
-        #     tgb.text(
-        #         "- National and provincial hydrocarbon regulations\n"
-        #         "- Environmental impact assessment frameworks\n"
-        #         "- Local content and investment promotion policies\n",
-        #         mode="md",
-        #     )
-
-        # with tgb.part(class_name="card"):
-        #     tgb.text("### 🌍 Environment & Communities", mode="md")
-        #     tgb.text(
-        #         "- Water use and management in hydraulic fracturing\n"
-        #         "- Induced seismicity and subsurface risks\n"
-        #         "- Socio-economic impacts on local communities (e.g., Añelo)\n",
-        #         mode="md",
-        #     )
 
 
 # About Page

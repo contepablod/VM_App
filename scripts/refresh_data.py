@@ -432,6 +432,20 @@ def _load_raw_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Dat
     return raw_prod, raw_frac, raw_drill_wells, raw_drill_meters, raw_completion
 
 
+def _atomic_write_csv(df: pd.DataFrame, dest: Path) -> None:
+    """Write a CSV to a temp file, then atomically rename into place."""
+    with tempfile.NamedTemporaryFile(
+        dir=dest.parent, prefix=dest.name + ".", suffix=".tmp", delete=False, mode="w"
+    ) as tmp_f:
+        tmp_path = Path(tmp_f.name)
+    try:
+        df.to_csv(tmp_path, index=False)
+        tmp_path.replace(dest)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
 def _write_outputs(
     prod_df: pd.DataFrame,
     frac_df: pd.DataFrame,
@@ -439,10 +453,27 @@ def _write_outputs(
     completion_df: pd.DataFrame,
 ) -> None:
     OUT_PROD_PATH.parent.mkdir(parents=True, exist_ok=True)
-    prod_df.to_csv(OUT_PROD_PATH, index=False)
-    frac_df.to_csv(OUT_FRAC_PATH, index=False)
-    drill_df.to_csv(OUT_DRILL_PATH, index=False)
-    completion_df.to_csv(OUT_COMPLETION_PATH, index=False)
+    # Write all to temp files first, then rename all at once to minimize
+    # the window where the app could see a mix of old and new files.
+    pairs = [
+        (prod_df, OUT_PROD_PATH),
+        (frac_df, OUT_FRAC_PATH),
+        (drill_df, OUT_DRILL_PATH),
+        (completion_df, OUT_COMPLETION_PATH),
+    ]
+    tmp_paths = []
+    try:
+        for df, dest in pairs:
+            tmp = dest.with_suffix(".csv.tmp")
+            df.to_csv(tmp, index=False)
+            tmp_paths.append((tmp, dest))
+        # All writes succeeded — rename all at once.
+        for tmp, dest in tmp_paths:
+            tmp.replace(dest)
+    except BaseException:
+        for tmp, _ in tmp_paths:
+            tmp.unlink(missing_ok=True)
+        raise
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

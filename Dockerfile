@@ -4,10 +4,10 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 
 # Copy dependency metadata first for better caching.
-COPY pyproject.toml ./
+COPY pyproject.toml uv.lock ./
 
 # Install dependencies into the project virtual environment.
-RUN uv sync --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy the rest of the app.
 COPY . .

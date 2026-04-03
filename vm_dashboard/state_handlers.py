@@ -2,79 +2,116 @@ import pandas as pd
 import taipy.gui.builder as tgb
 from taipy.gui.gui_actions import navigate
 
-from .sql_chat import _chat_welcome_message, _update_chat_runtime_status, ensure_sqlite_db
-from .state_data import (
-    FRAC_SAMPLE_N,
-    MAX_TABLE_ROWS,
-    OPENROUTER_DEFAULT_MODEL,
-    chat_users,
-    comp,
-    drill,
-    frac,
-    prod,
+from . import state_data
+from .sql_chat import (
+    _chat_welcome_message,
+    _update_chat_runtime_status,
+    ensure_sqlite_db,
+    get_sqlite_db_status,
 )
 
 
 # ------------------------------------------------------------------
 # STATE UPDATE (DATA & KPIs)
 # ------------------------------------------------------------------
+def _normalize_selector_value(value, lov):
+    valid_values = {item for item in lov if item != "All"}
+    if isinstance(value, list):
+        if "All" in value:
+            return "All"
+        selected = [item for item in value if item in valid_values]
+        return selected if selected else "All"
+    return value if value in valid_values else "All"
+
+
+def _apply_filters(df, company_filter, field_filter, well_type_filter, year_range):
+    """Apply company/field/well_type/year filters to a DataFrame."""
+    if isinstance(company_filter, list):
+        if "All" not in company_filter:
+            df = df[df["company"].isin(company_filter)]
+    elif company_filter != "All":
+        df = df[df["company"] == company_filter]
+
+    if isinstance(field_filter, list):
+        if "All" not in field_filter:
+            df = df[df["field"].isin(field_filter)]
+    elif field_filter != "All":
+        df = df[df["field"] == field_filter]
+
+    if "well_type" in df.columns:
+        if isinstance(well_type_filter, list):
+            if "All" not in well_type_filter:
+                df = df[df["well_type"].isin(well_type_filter)]
+        elif well_type_filter != "All":
+            df = df[df["well_type"] == well_type_filter]
+
+    df = df[(df["year"] >= year_range[0]) & (df["year"] <= year_range[1])]
+    return df
+
+
+def _sync_runtime_state(state, force_data_reload=False):
+    state_data.ensure_data_loaded(force=force_data_reload)
+
+    state.company_lov = list(state_data.company_lov)
+    state.field_lov = list(state_data.field_lov)
+    state.well_type_lov = list(state_data.well_type_lov)
+    state.year_min = state_data.year_min
+    state.year_max = state_data.year_max
+    state.data_runtime_status = state_data.data_runtime_status
+    state.sql_cache_status = get_sqlite_db_status()
+
+    state.company_filter = _normalize_selector_value(
+        getattr(state, "company_filter", "All"),
+        state.company_lov,
+    )
+    state.field_filter = _normalize_selector_value(
+        getattr(state, "field_filter", "All"),
+        state.field_lov,
+    )
+    state.well_type_filter = _normalize_selector_value(
+        getattr(state, "well_type_filter", "All"),
+        state.well_type_lov,
+    )
+
+    current_year_range = getattr(
+        state,
+        "year_range",
+        [state.year_min, state.year_max],
+    )
+    if not isinstance(current_year_range, list) or len(current_year_range) != 2:
+        current_year_range = [state.year_min, state.year_max]
+
+    try:
+        year_start = int(current_year_range[0]) if current_year_range else state.year_min
+    except (TypeError, ValueError):
+        year_start = state.year_min
+    try:
+        year_end = int(current_year_range[1]) if current_year_range else state.year_max
+    except (TypeError, ValueError):
+        year_end = state.year_max
+    year_start = max(state.year_min, min(year_start, state.year_max))
+    year_end = max(state.year_min, min(year_end, state.year_max))
+    if year_start > year_end:
+        year_start, year_end = state.year_min, state.year_max
+    state.year_range = [year_start, year_end]
+
+
 def update_state(state):
     # ---------- FILTER PRODUCTION DATA ----------
-    d1 = prod.copy()
-
     company_filter = state.company_filter
     field_filter = state.field_filter
     well_type_filter = state.well_type_filter
 
-    # company filter
-    if isinstance(company_filter, list):
-        if "All" not in company_filter:
-            d1 = d1[d1["company"].isin(company_filter)]
-    elif company_filter != "All":
-        d1 = d1[d1["company"] == company_filter]
-
-    # field filter
-    if isinstance(field_filter, list):
-        if "All" not in field_filter:
-            d1 = d1[d1["field"].isin(field_filter)]
-    elif field_filter != "All":
-        d1 = d1[d1["field"] == field_filter]
-
-    # well type filter
-    if isinstance(well_type_filter, list):
-        if "All" not in well_type_filter:
-            d1 = d1[d1["well_type"].isin(well_type_filter)]
-    elif well_type_filter != "All":
-        d1 = d1[d1["well_type"] == well_type_filter]
-
-    # year range
-    d1 = d1[(d1["year"] >= state.year_range[0]) & (d1["year"] <= state.year_range[1])]
+    d1 = _apply_filters(
+        state_data.prod.copy(), company_filter, field_filter, well_type_filter, state.year_range
+    )
     state.filtered_prod = d1
-    state.filtered_prod_view = d1.head(MAX_TABLE_ROWS)
+    state.filtered_prod_view = d1.head(state_data.MAX_TABLE_ROWS)
 
     # ---------- FILTER FRAC DATA ----------
-    d2 = frac.copy()
-
-    if isinstance(company_filter, list):
-        if "All" not in company_filter:
-            d2 = d2[d2["company"].isin(company_filter)]
-    elif company_filter != "All":
-        d2 = d2[d2["company"] == company_filter]
-
-    if isinstance(field_filter, list):
-        if "All" not in field_filter:
-            d2 = d2[d2["field"].isin(field_filter)]
-    elif field_filter != "All":
-        d2 = d2[d2["field"] == field_filter]
-
-    if "well_type" in d2.columns:
-        if isinstance(well_type_filter, list):
-            if "All" not in well_type_filter:
-                d2 = d2[d2["well_type"].isin(well_type_filter)]
-        elif well_type_filter != "All":
-            d2 = d2[d2["well_type"] == well_type_filter]
-
-    d2 = d2[(d2["year"] >= state.year_range[0]) & (d2["year"] <= state.year_range[1])]
+    d2 = _apply_filters(
+        state_data.frac.copy(), company_filter, field_filter, well_type_filter, state.year_range
+    )
 
     if not d2.empty:
         d2 = d2.copy()
@@ -103,7 +140,7 @@ def update_state(state):
         )
 
     state.filtered_frac = d2
-    state.filtered_frac_view = d2.head(MAX_TABLE_ROWS)
+    state.filtered_frac_view = d2.head(state_data.MAX_TABLE_ROWS)
 
     if not d2.empty:
         state.avg_lateral_by_company_df = (
@@ -114,27 +151,15 @@ def update_state(state):
     else:
         state.avg_lateral_by_company_df = d2.head(0)
 
-    if len(d2) > FRAC_SAMPLE_N:
-        state.filtered_frac_sample = d2.sample(FRAC_SAMPLE_N, random_state=0)
+    if len(d2) > state_data.FRAC_SAMPLE_N:
+        state.filtered_frac_sample = d2.sample(state_data.FRAC_SAMPLE_N, random_state=0)
     else:
         state.filtered_frac_sample = d2
 
     # ---------- FILTER DRILL DATA ----------
-    d3 = drill.copy()
-
-    if isinstance(company_filter, list):
-        if "All" not in company_filter:
-            d3 = d3[d3["company"].isin(company_filter)]
-    elif company_filter != "All":
-        d3 = d3[d3["company"] == company_filter]
-
-    if isinstance(field_filter, list):
-        if "All" not in field_filter:
-            d3 = d3[d3["field"].isin(field_filter)]
-    elif field_filter != "All":
-        d3 = d3[d3["field"] == field_filter]
-
-    d3 = d3[(d3["year"] >= state.year_range[0]) & (d3["year"] <= state.year_range[1])]
+    d3 = _apply_filters(
+        state_data.drill.copy(), company_filter, field_filter, well_type_filter, state.year_range
+    )
     state.filtered_drill = d3
 
     if not d3.empty:
@@ -153,21 +178,9 @@ def update_state(state):
         state.drill_meters_by_company_df = d3.head(0)
 
     # ---------- FILTER COMPLETION DATA ----------
-    d4 = comp.copy()
-
-    if isinstance(state.company_filter, list):
-        if "All" not in state.company_filter:
-            d4 = d4[d4["company"].isin(state.company_filter)]
-    elif state.company_filter != "All":
-        d4 = d4[d4["company"] == state.company_filter]
-
-    if isinstance(state.field_filter, list):
-        if "All" not in state.field_filter:
-            d4 = d4[d4["field"].isin(state.field_filter)]
-    elif state.field_filter != "All":
-        d4 = d4[d4["field"] == state.field_filter]
-
-    d4 = d4[(d4["year"] >= state.year_range[0]) & (d4["year"] <= state.year_range[1])]
+    d4 = _apply_filters(
+        state_data.comp.copy(), company_filter, field_filter, well_type_filter, state.year_range
+    )
     state.filtered_comp = d4
 
     if not d4.empty:
@@ -388,12 +401,17 @@ def update_state(state):
         state.avg_proppant_intensity = 0.0
         state.avg_fluid_intensity = 0.0
 
-    state.avg_depth = round(state.filtered_prod["depth"].mean(), 2) if not state.filtered_prod.empty else 0.0
+    state.avg_depth = round(latest["depth"].mean(), 2) if not latest.empty else 0.0
     state.avg_lateral = (
         round(state.filtered_frac["lateral_length_ft"].mean(), 2) if not state.filtered_frac.empty else 0.0
     )
 
-    if state.selected_well:
+    state.well_lov = sorted(state.filtered_prod["well_name"].dropna().unique().tolist())
+    selected_well = getattr(state, "selected_well", "")
+    if selected_well and selected_well not in state.well_lov:
+        state.selected_well = ""
+
+    if getattr(state, "selected_well", ""):
         state.selected_prod_df = state.filtered_prod[
             state.filtered_prod["well_name"] == state.selected_well
         ]
@@ -406,22 +424,109 @@ def update_state(state):
 
 
 # ------------------------------------------------------------------
-# NAVIGATION STATE UPDATE
+# NAVIGATION
 # ------------------------------------------------------------------
+_NAV_PAGES = [
+    ("overview", "/", "🏠 OVERVIEW"),
+    ("geology", "geology", "🪨 GEOLOGY"),
+    ("drilling", "drilling", "🛠️ DRILLING"),
+    ("frac", "frac", "💥 FRAC"),
+    ("production", "production", "📈 PRODUCTION"),
+    ("map", "map", "🗺️ MAP"),
+    ("wells", "wells", "🔎 WELLS"),
+    ("data", "data", "📄 DATA"),
+    ("chat", "chat", "🤖 CHAT"),
+    ("links", "links", "🔗 LINKS"),
+    ("about", "about", "ℹ️ ABOUT"),
+]
+
+
 def update_nav(state):
     current = getattr(state, "active_page", "overview")
+    for page_name, _, _ in _NAV_PAGES:
+        attr = f"nav_{page_name}"
+        is_active = current == page_name or (page_name == "overview" and current == "/")
+        setattr(state, attr, "nav-button active" if is_active else "nav-button")
 
-    state.nav_overview = "nav-button active" if current in ("overview", "/") else "nav-button"
-    state.nav_geology = "nav-button active" if current == "geology" else "nav-button"
-    state.nav_drilling = "nav-button active" if current == "drilling" else "nav-button"
-    state.nav_frac = "nav-button active" if current == "frac" else "nav-button"
-    state.nav_production = "nav-button active" if current == "production" else "nav-button"
-    state.nav_map = "nav-button active" if current == "map" else "nav-button"
-    state.nav_wells = "nav-button active" if current == "wells" else "nav-button"
-    state.nav_data = "nav-button active" if current == "data" else "nav-button"
-    state.nav_chat = "nav-button active" if current == "chat" else "nav-button"
-    state.nav_links = "nav-button active" if current == "links" else "nav-button"
-    state.nav_about = "nav-button active" if current == "about" else "nav-button"
+
+_NAV_DESTINATIONS = {name: dest for name, dest, _ in _NAV_PAGES}
+
+
+def _go_to_page(state, page_name, destination):
+    state.active_page = page_name
+    update_state(state)
+    update_nav(state)
+    navigate(state, to=destination)
+
+
+def go_overview(state):
+    _go_to_page(state, "overview", "/")
+
+
+def go_geology(state):
+    _go_to_page(state, "geology", "geology")
+
+
+def go_drilling(state):
+    _go_to_page(state, "drilling", "drilling")
+
+
+def go_frac(state):
+    _go_to_page(state, "frac", "frac")
+
+
+def go_production(state):
+    _go_to_page(state, "production", "production")
+
+
+def go_map(state):
+    _go_to_page(state, "map", "map")
+
+
+def go_wells(state):
+    _go_to_page(state, "wells", "wells")
+
+
+def go_data(state):
+    _go_to_page(state, "data", "data")
+
+
+def go_chat(state):
+    _go_to_page(state, "chat", "chat")
+
+
+def go_links(state):
+    _go_to_page(state, "links", "links")
+
+
+def go_about(state):
+    _go_to_page(state, "about", "about")
+
+
+_NAV_ACTIONS = {
+    "overview": go_overview,
+    "geology": go_geology,
+    "drilling": go_drilling,
+    "frac": go_frac,
+    "production": go_production,
+    "map": go_map,
+    "wells": go_wells,
+    "data": go_data,
+    "chat": go_chat,
+    "links": go_links,
+    "about": go_about,
+}
+
+
+def sidebar():
+    with tgb.part(class_name="sidebar"):
+        tgb.text("## 📘 Navigation", mode="md")
+        for page_name, _, label in _NAV_PAGES:
+            tgb.button(
+                label,
+                class_name="{nav_" + page_name + "}",
+                on_action=_NAV_ACTIONS[page_name],
+            )
 
 
 # ------------------------------------------------------------------
@@ -441,12 +546,14 @@ def on_change(state, var_name, var_value):
 
 
 def on_init(state):
+    _sync_runtime_state(state)
+
     if not hasattr(state, "active_page"):
         state.active_page = "overview"
     if not hasattr(state, "map_metric") or not state.map_metric:
         state.map_metric = "Oil"
     if not hasattr(state, "openrouter_model") or not state.openrouter_model:
-        state.openrouter_model = OPENROUTER_DEFAULT_MODEL
+        state.openrouter_model = state_data.OPENROUTER_DEFAULT_MODEL
     if not hasattr(state, "openrouter_api_key_input"):
         state.openrouter_api_key_input = ""
     if not hasattr(state, "web_search_api_key_input"):
@@ -454,7 +561,7 @@ def on_init(state):
     if not hasattr(state, "chat_messages") or not state.chat_messages:
         state.chat_messages = [["m0", _chat_welcome_message(), "assistant"]]
     if not hasattr(state, "chat_users"):
-        state.chat_users = chat_users
+        state.chat_users = state_data.chat_users
     if not hasattr(state, "sql_last_result"):
         state.sql_last_result = pd.DataFrame()
     if not hasattr(state, "sql_last_query"):
@@ -465,90 +572,18 @@ def on_init(state):
         state.chat_busy = False
     if not hasattr(state, "chat_input_active"):
         state.chat_input_active = True
+    if not hasattr(state, "selected_well"):
+        state.selected_well = ""
     ensure_sqlite_db()
+    state.sql_cache_status = get_sqlite_db_status()
     _update_chat_runtime_status(state)
     update_state(state)
     update_nav(state)
 
 
-# Navigation actions
-def go_overview(state):
-    state.active_page = "overview"
-    update_nav(state)
-    navigate(state, to="/")
-
-
-def go_geology(state):
-    state.active_page = "geology"
-    update_nav(state)
-    navigate(state, to="geology")
-
-
-def go_drilling(state):
-    state.active_page = "drilling"
-    update_nav(state)
-    navigate(state, to="drilling")
-
-
-def go_production(state):
-    state.active_page = "production"
-    update_nav(state)
-    navigate(state, to="production")
-
-
-def go_frac(state):
-    state.active_page = "frac"
-    update_nav(state)
-    navigate(state, to="frac")
-
-
-def go_map(state):
-    state.active_page = "map"
-    update_nav(state)
-    navigate(state, to="map")
-
-
-def go_wells(state):
-    state.active_page = "wells"
-    update_nav(state)
-    navigate(state, to="wells")
-
-
-def go_data(state):
-    state.active_page = "data"
-    update_nav(state)
-    navigate(state, to="data")
-
-
-def go_chat(state):
-    state.active_page = "chat"
-    update_nav(state)
-    navigate(state, to="chat")
-
-
-def go_links(state):
-    state.active_page = "links"
-    update_nav(state)
-    navigate(state, to="links")
-
-
-def go_about(state):
-    state.active_page = "about"
-    update_nav(state)
-    navigate(state, to="about")
-
-
-def sidebar():
-    with tgb.part(class_name="sidebar"):
-        tgb.text("## 📘 Navigation", mode="md")
-        tgb.button("🏠 OVERVIEW", class_name="{nav_overview}", on_action=go_overview)
-        tgb.button("🪨 GEOLOGY", class_name="{nav_geology}", on_action=go_geology)
-        tgb.button("🛠️ DRILLING", class_name="{nav_drilling}", on_action=go_drilling)
-        tgb.button("💥 FRAC", class_name="{nav_frac}", on_action=go_frac)
-        tgb.button("📈 PRODUCTION", class_name="{nav_production}", on_action=go_production)
-        tgb.button("🗺️ MAP", class_name="{nav_map}", on_action=go_map)
-        tgb.button("🔎 WELLS", class_name="{nav_wells}", on_action=go_wells)
-        tgb.button("📄 DATA", class_name="{nav_data}", on_action=go_data)
-        tgb.button("🤖 CHAT", class_name="{nav_chat}", on_action=go_chat)
-        tgb.button("🔗 LINKS", class_name="{nav_links}", on_action=go_links)
-        tgb.button("ℹ️ ABOUT", class_name="{nav_about}", on_action=go_about)
+def reload_dashboard_data(state):
+    state_data.ensure_data_loaded(force=True)
+    ensure_sqlite_db(force=True)
+    state.sql_cache_status = get_sqlite_db_status()
+    update_state(state)
+    _update_chat_runtime_status(state)

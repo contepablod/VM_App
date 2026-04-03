@@ -58,6 +58,9 @@ Thumbs.db
 # Docker
 *.tar
 
+# Codex
+.codex
+
 drafts/
 user_data/
 data/datos-de-fractura-de-pozos-de-hidrocarburos-adjunto-iv-actualizacin-diaria.csv
@@ -66,4 +69,5 @@ data/pozos-en-perforacin.csv
 data/metros-perforados.csv
 data/pozos-terminados.csv
 data/vm_analytics.db
+data/*.csv.tmp
 notebooks/

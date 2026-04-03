@@ -8,13 +8,14 @@ from vm_dashboard.downloads import (  # noqa: F401
     download_filtered_prod,
 )
 from vm_dashboard.pages import PAGES
+from vm_dashboard.state_data import *  # noqa: F401,F403
 from vm_dashboard.sql_chat import (  # noqa: F401
     clear_chat,
+    ensure_sqlite_db,
     on_chat_action,
     on_chat_settings_change,
     rebuild_sql_cache,
 )
-from vm_dashboard.state_data import *  # noqa: F401,F403
 from vm_dashboard.state_handlers import (  # noqa: F401
     go_about,
     go_chat,
@@ -39,6 +40,9 @@ if __name__ == "__main__":
         level=log_level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+
+    ensure_data_loaded()
+    ensure_sqlite_db()
 
     port = int(os.getenv("PORT", "5000"))
     gui = Gui(pages=PAGES, css_file="css/styles.css")

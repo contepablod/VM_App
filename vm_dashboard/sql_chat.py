@@ -10,6 +10,7 @@ from urllib import request as urlrequest
 
 import pandas as pd
 
+from . import state_data
 from .state_data import (
     CHAT_WELCOME_TEXT,
     DATA_PATH_COMP,
@@ -27,10 +28,6 @@ from .state_data import (
     TAVILY_SEARCH_API_URL,
     WEB_SEARCH_MAX_RESULTS,
     WEB_SEARCH_TIMEOUT_SECONDS,
-    comp,
-    drill,
-    frac,
-    prod,
 )
 
 _sql_db_status = "SQLite not initialized"
@@ -118,14 +115,15 @@ def _retrieve_context(query, top_k=4):
 
 
 def _build_sqlite_db():
+    state_data.ensure_data_loaded()
     db_path = Path(SQLITE_DB_PATH)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     with sqlite3.connect(db_path) as conn:
-        prod.to_sql("prod", conn, if_exists="replace", index=False)
-        frac.to_sql("frac", conn, if_exists="replace", index=False)
-        drill.to_sql("drill", conn, if_exists="replace", index=False)
-        comp.to_sql("completion", conn, if_exists="replace", index=False)
+        state_data.prod.to_sql("prod", conn, if_exists="replace", index=False)
+        state_data.frac.to_sql("frac", conn, if_exists="replace", index=False)
+        state_data.drill.to_sql("drill", conn, if_exists="replace", index=False)
+        state_data.comp.to_sql("completion", conn, if_exists="replace", index=False)
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_prod_well_id ON prod(well_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_prod_year ON prod(year)")
@@ -147,11 +145,11 @@ def _sqlite_is_stale():
     db_path = Path(SQLITE_DB_PATH)
     if not db_path.exists():
         return True
-    db_mtime = db_path.stat().st_mtime
+    db_mtime_ns = db_path.stat().st_mtime_ns
     source_paths = [DATA_PATH_PROD, DATA_PATH_FRAC, DATA_PATH_DRILL, DATA_PATH_COMP]
     for source in source_paths:
         p = Path(source)
-        if p.exists() and p.stat().st_mtime > db_mtime:
+        if p.exists() and p.stat().st_mtime_ns > db_mtime_ns:
             return True
     return False
 
@@ -159,6 +157,7 @@ def _sqlite_is_stale():
 def ensure_sqlite_db(force=False):
     global _sql_db_status
     try:
+        state_data.ensure_data_loaded(force=force)
         if force or _sqlite_is_stale():
             _debug("Rebuilding SQLite cache at %s (force=%s)", SQLITE_DB_PATH, force)
             _build_sqlite_db()
@@ -169,6 +168,10 @@ def ensure_sqlite_db(force=False):
         _sql_db_status = f"SQLite error: {exc}"
         _LOGGER.exception("SQLite cache error")
         return False
+
+
+def get_sqlite_db_status():
+    return _sql_db_status
 
 
 def _validate_read_only_sql(query):
@@ -697,6 +700,8 @@ def _update_chat_runtime_status(state):
     )
     state.chat_input_active = not bool(getattr(state, "chat_busy", False))
     state.chat_runtime_status = "Running" if getattr(state, "chat_busy", False) else "Ready"
+    state.sql_cache_status = get_sqlite_db_status()
+    state.data_runtime_status = state_data.data_runtime_status
 
 
 def on_chat_settings_change(state, var_name, var_value):
@@ -829,5 +834,6 @@ def clear_chat(state):
 
 
 def rebuild_sql_cache(state):
+    state_data.ensure_data_loaded(force=True)
     ensure_sqlite_db(force=True)
     _update_chat_runtime_status(state)
