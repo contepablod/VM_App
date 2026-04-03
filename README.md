@@ -1,3 +1,14 @@
+---
+title: Vaca Muerta Dashboard
+emoji: 🛢️
+colorFrom: green
+colorTo: gray
+sdk: docker
+pinned: false
+license: mit
+short_description: Analytics dashboard for Argentina's Vaca Muerta Formation
+---
+
 # Vaca Muerta Dashboard
 
 Interactive analytics dashboard for Argentina's **Vaca Muerta** shale formation — drilling, completions, frac treatments, and production data, with an AI-powered SQL copilot.
