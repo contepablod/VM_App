@@ -52,6 +52,10 @@ Thumbs.db
 .env
 .env.local
 
+# uv cache
+.uv_cache/
+uv-cache/
+
 # Vercel build output (if running locally)
 .vercel/
 
